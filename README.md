@@ -1,4 +1,4 @@
-# 🎬 Media Downloader
+# Media Downloader
 
 Herramienta local para **descargar, extraer audio y transcribir** contenido multimedia de YouTube, Instagram y TikTok — además de archivos locales.
 
@@ -7,16 +7,16 @@ Herramienta local para **descargar, extraer audio y transcribir** contenido mult
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Whisper](https://img.shields.io/badge/OpenAI_Whisper-412991?style=flat&logo=openai&logoColor=white)
 
-## ✨ Funcionalidades
+## Funcionalidades
 
 | Función | Descripción |
 |---|---|
-| 🔗 **Descargar desde URL** | Descarga video o audio de YouTube, Instagram y TikTok |
-| 📁 **Subir archivo** | Sube un video local y extrae el audio en MP3 |
-| 📝 **Transcripción IA** | Transcribe cualquier video a texto usando Whisper AI (local, gratis) |
-| 🎵 **Extraer audio** | Convierte video a MP3 a 192kbps con ffmpeg |
+|  **Descargar desde URL** | Descarga video o audio de YouTube, Instagram y TikTok |
+|  **Subir archivo** | Sube un video local y extrae el audio en MP3 |
+|  **Transcripción IA** | Transcribe cualquier video a texto usando Whisper AI (local, gratis) |
+|  **Extraer audio** | Convierte video a MP3 a 192kbps con ffmpeg |
 
-## 🚀 Instalación
+## Instalación
 
 ### Requisitos previos
 - [Node.js](https://nodejs.org/) (v18+)
@@ -43,9 +43,9 @@ pip install openai-whisper
 npm start
 ```
 
-Abre **http://localhost:3000** en tu navegador. 🎉
+Abre **http://localhost:3000** en tu navegador.
 
-## 🛠️ Stack Tecnológico
+##  Stack Tecnológico
 
 - **Backend:** Node.js + Express
 - **Motor de descarga:** yt-dlp (Python)
@@ -53,13 +53,13 @@ Abre **http://localhost:3000** en tu navegador. 🎉
 - **Transcripción:** OpenAI Whisper (modelo `base`, local)
 - **Frontend:** HTML + CSS + JavaScript vanilla
 
-## 📝 Notas
+##  Notas
 
 - La transcripción se ejecuta **100% local** en tu PC. No se envía nada a la nube.
 - La primera vez que transcribas, Whisper descargará automáticamente el modelo (~150MB).
 - Los archivos temporales se eliminan automáticamente del servidor tras 60 segundos.
 - ffmpeg.exe no se incluye en el repositorio por su tamaño (~83MB). Descárgalo de [gyan.dev](https://www.gyan.dev/ffmpeg/builds/).
 
-## 📄 Licencia
+##  Licencia
 
 MIT
