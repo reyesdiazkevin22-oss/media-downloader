@@ -28,7 +28,7 @@ Herramienta local para **descargar, extraer audio y transcribir** contenido mult
 
 ```bash
 # 1. Clona el repositorio
-git clone https://github.com/TU_USUARIO/media-downloader.git
+git clone https://github.com/reyesdiazkevin22-oss/media-downloader.git
 cd media-downloader
 
 # 2. Instala dependencias de Node.js
