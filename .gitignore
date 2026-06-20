@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Temporary files
+downloads/
+uploads/
+
+# FFmpeg binary (too large, users install locally)
+ffmpeg.exe
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

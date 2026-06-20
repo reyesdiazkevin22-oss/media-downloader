@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media Downloader | YouTube, Instagram & TikTok</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Descarga videos, extrae audio y transcribe contenido de YouTube, Instagram y TikTok.">
+</head>
+<body>
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+
+  <div id="app">
+    <header>
+      <h1>Media Downloader</h1>
+      <p class="subtitle">Descarga, extrae audio y transcribe contenido multimedia</p>
+    </header>
+
+    <!-- ==================== TABS ==================== -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="url">
+        <span>🔗</span> Desde URL
+      </button>
+      <button class="mode-tab" data-mode="upload">
+        <span>📁</span> Subir archivo
+      </button>
+    </div>
+
+    <!-- ==================== URL MODE ==================== -->
+    <div id="url-mode" class="mode-content active">
+      <div class="platform-pills">
+        <span class="pill active" data-platform="all" id="pill-all">
+          <span class="pill-dot"></span> Todos
+        </span>
+        <span class="pill" data-platform="youtube" id="pill-youtube">
+          <svg class="pill-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.38.55A3.02 3.02 0 0 0 .5 6.19 31.8 31.8 0 0 0 0 12a31.8 31.8 0 0 0 .5 5.81 3.02 3.02 0 0 0 2.12 2.14c1.88.55 9.38.55 9.38.55s7.5 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14A31.8 31.8 0 0 0 24 12a31.8 31.8 0 0 0-.5-5.81zM9.55 15.5V8.5l6.27 3.5-6.27 3.5z"/></svg>
+          YouTube
+        </span>
+        <span class="pill" data-platform="instagram" id="pill-instagram">
+          <svg class="pill-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 3.25.15 4.77 1.69 4.92 4.92.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.15 3.23-1.66 4.77-4.92 4.92-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-3.26-.15-4.77-1.7-4.92-4.92C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85C2.38 3.92 3.9 2.38 7.15 2.23 8.42 2.17 8.8 2.16 12 2.16zM12 0C8.74 0 8.33.01 7.05.07 2.7.27.27 2.7.07 7.05.01 8.33 0 8.74 0 12s.01 3.67.07 4.95c.2 4.36 2.62 6.78 6.98 6.98C8.33 23.99 8.74 24 12 24s3.67-.01 4.95-.07c4.35-.2 6.78-2.62 6.98-6.98.06-1.28.07-1.69.07-4.95s-.01-3.67-.07-4.95c-.2-4.35-2.63-6.78-6.98-6.98C15.67.01 15.26 0 12 0zm0 5.84a6.16 6.16 0 1 0 0 12.32 6.16 6.16 0 0 0 0-12.32zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.41-11.85a1.44 1.44 0 1 0 0 2.88 1.44 1.44 0 0 0 0-2.88z"/></svg>
+          Instagram
+        </span>
+        <span class="pill" data-platform="tiktok" id="pill-tiktok">
+          <svg class="pill-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.18 8.18 0 0 0 4.78 1.52V6.76a4.85 4.85 0 0 1-1.01-.07z"/></svg>
+          TikTok
+        </span>
+      </div>
+
+      <div class="search-container">
+        <div class="input-wrapper" id="input-wrapper">
+          <div class="platform-indicator" id="platform-indicator">
+            <span class="indicator-icon" id="indicator-icon">🔗</span>
+          </div>
+          <input type="text" id="url-input" placeholder="Pega el enlace de YouTube, Instagram o TikTok aquí..." autocomplete="off">
+          <button id="fetch-btn">Analizar</button>
+        </div>
+
+        <div id="loader" class="loader"></div>
+
+        <div id="video-preview" class="video-preview">
+          <div class="thumbnail-container">
+            <img id="thumbnail" src="" alt="Thumbnail">
+            <div class="platform-badge" id="platform-badge"></div>
+          </div>
+          <div class="video-info">
+            <h2 id="title" class="video-title">Título del contenido</h2>
+            <p id="uploader" class="video-uploader"></p>
+            <p id="duration" class="video-meta">Duración: 0:00</p>
+            <div class="download-actions" id="download-actions">
+              <button class="dl-btn primary" id="dl-video">
+                <span class="icon">⬇️</span> Video (.mp4)
+              </button>
+              <button class="dl-btn" id="dl-audio">
+                <span class="icon">🎵</span> Audio (.mp3)
+              </button>
+              <button class="dl-btn" id="dl-transcribe">
+                <span class="icon">📝</span> Transcribir
+              </button>
+            </div>
+          </div>
+          <div id="transcription-container" class="transcription-container" style="display: none;">
+            <div class="transcription-header">
+              <h3>Transcripción (Whisper AI)</h3>
+              <button id="copy-transcription" class="copy-btn">Copiar</button>
+            </div>
+            <div id="transcription-text" class="transcription-text"></div>
+          </div>
+        </div>
+        
+        <div id="status-msg" style="text-align: center; color: var(--text-dim); margin-top: 1rem; display: none;"></div>
+      </div>
+    </div>
+
+    <!-- ==================== UPLOAD MODE ==================== -->
+    <div id="upload-mode" class="mode-content">
+      <div class="search-container">
+        <div class="drop-zone" id="drop-zone">
+          <div class="drop-zone-content">
+            <span class="drop-icon">📂</span>
+            <p class="drop-title">Arrastra tu video aquí</p>
+            <p class="drop-subtitle">o haz clic para seleccionar un archivo</p>
+            <p class="drop-hint">MP4, MOV, AVI, MKV, WEBM — Máx. 500MB</p>
+          </div>
+          <input type="file" id="file-input" accept="video/*,audio/*" hidden>
+        </div>
+
+        <div id="file-preview" class="file-preview" style="display: none;">
+          <div class="file-info-card">
+            <div class="file-icon-wrapper">
+              <span class="file-icon">🎬</span>
+            </div>
+            <div class="file-details">
+              <h3 id="file-name" class="file-name">archivo.mp4</h3>
+              <p id="file-size" class="file-size">0 MB</p>
+            </div>
+            <button id="file-remove" class="file-remove" title="Quitar archivo">✕</button>
+          </div>
+
+          <div class="upload-actions">
+            <button class="dl-btn primary" id="extract-audio-btn">
+              <span class="icon">🎵</span> Extraer Audio (.mp3)
+            </button>
+            <button class="dl-btn" id="transcribe-file-btn">
+              <span class="icon">📝</span> Transcribir
+            </button>
+          </div>
+
+          <div id="upload-progress" class="upload-progress" style="display: none;">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p id="upload-status" class="upload-status">Procesando...</p>
+          </div>
+        </div>
+
+        <div id="file-transcription-container" class="transcription-container" style="display: none;">
+          <div class="transcription-header">
+            <h3>Transcripción (Whisper AI)</h3>
+            <button id="copy-file-transcription" class="copy-btn">Copiar</button>
+          </div>
+          <div id="file-transcription-text" class="transcription-text"></div>
+        </div>
+
+        <div id="upload-status-msg" style="text-align: center; color: var(--text-dim); margin-top: 1rem; display: none;"></div>
+      </div>
+    </div>
+
+    <footer class="app-footer">
+      <p>Soporta YouTube, Instagram, TikTok + Archivos locales</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
