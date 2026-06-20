@@ -12,7 +12,7 @@ def transcribe(file_path):
     try:
         # Load model (base is a good balance between speed and accuracy)
         model = whisper.load_model("base")
-        result = model.transcribe(file_path, language="es")
+        result = model.transcribe(file_path)
         return {"text": result["text"]}
     except Exception as e:
         return {"error": str(e)}
