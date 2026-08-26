@@ -1,0 +1,8 @@
+node_modules
+downloads
+uploads
+cookies.txt
+ffmpeg.exe
+ffprobe.exe
+*.log
+.git

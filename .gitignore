@@ -7,6 +7,10 @@ uploads/
 
 # FFmpeg binary (too large, users install locally)
 ffmpeg.exe
+ffprobe.exe
+
+# Cookies (personal YouTube/Instagram session — never commit)
+cookies.txt
 
 # OS files
 .DS_Store
