@@ -19,6 +19,16 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const PUBLIC_MODE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const supabase = PUBLIC_MODE ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+// ── cookies.txt desde variable de entorno (Railway) ──────────────────
+// En Railway no hay archivo local: pega el contenido completo de tu cookies.txt
+// en la variable de entorno COOKIES_TXT y aquí se escribe a disco al arrancar.
+// En tu PC no hace falta nada de esto: ya tienes cookies.txt como archivo normal.
+const cookiesPath = path.join(__dirname, 'cookies.txt');
+if (process.env.COOKIES_TXT && !fs.existsSync(cookiesPath)) {
+    fs.writeFileSync(cookiesPath, process.env.COOKIES_TXT);
+    console.log('cookies.txt generado a partir de la variable de entorno COOKIES_TXT.');
+}
+
 async function requireAuth(req, res, next) {
     if (!PUBLIC_MODE) return next(); // uso local/personal: sin gate
 
