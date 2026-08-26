@@ -45,7 +45,19 @@ async function requireAuth(req, res, next) {
 
 // ── CORS: en modo público, solo la web de Proyecto GRIT puede llamar a esta API ──
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
-app.use(cors({ origin: PUBLIC_MODE ? ALLOWED_ORIGIN : true }));
+const ALLOWED_ORIGINS = ALLOWED_ORIGIN.split(',').map(o => o.trim());
+const isLocalOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+app.use(cors({
+    origin: PUBLIC_MODE
+        ? (origin, callback) => {
+            // Sin cabecera Origin (curl, apps nativas) o localhost (pruebas antes de desplegar):
+            // el token de sesión sigue siendo el filtro real, esto solo evita bloquear pruebas locales.
+            if (!origin || ALLOWED_ORIGINS.includes(origin) || isLocalOrigin(origin)) return callback(null, true);
+            return callback(new Error('Origen no permitido por CORS'));
+        }
+        : true
+}));
 
 // ── Rate limiting: solo tiene sentido en modo público (varios miembros compartiendo el servidor) ──
 const apiLimiter = PUBLIC_MODE
