@@ -110,7 +110,7 @@ function sanitizeUrl(url) {
 
 // YouTube cookies can rotate/expire, which yt-dlp reports as one of these errors.
 // When that happens, retry once without cookies instead of failing outright.
-const RETRYABLE_YT_COOKIE_ERROR = /page needs to be reloaded|Sign in to confirm you're not a bot/i;
+const RETRYABLE_YT_COOKIE_ERROR = /page needs to be reloaded|Sign in to confirm you're not a bot|cookies are no longer valid/i;
 
 function execYtDlpWithCookieFallback(buildArgs, platform, execOptions, callback) {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
@@ -151,7 +151,7 @@ app.get('/api/info', requireAuth, apiLimiter, (req, res) => {
         }
         if (platform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=web_embedded,android');
+            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
         }
         args.push(videoUrl);
         return args;
@@ -249,7 +249,7 @@ app.get('/api/download', requireAuth, apiLimiter, (req, res) => {
         }
         if (platform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=web_embedded,android');
+            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
         }
 
         args.push('-o', `${outputPath}.%(ext)s`, videoUrl);
@@ -351,7 +351,7 @@ app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
         }
         if (tPlatform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=web_embedded,android');
+            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
         }
         args.push('-o', `${outputPath}.%(ext)s`, videoUrl);
         return args;
