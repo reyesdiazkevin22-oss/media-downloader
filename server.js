@@ -151,7 +151,7 @@ app.get('/api/info', requireAuth, apiLimiter, (req, res) => {
         }
         if (platform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
+            args.push('--extractor-args', 'youtube:player_client=android,tv_embedded,web_embedded');
         }
         args.push(videoUrl);
         return args;
@@ -165,7 +165,7 @@ app.get('/api/info', requireAuth, apiLimiter, (req, res) => {
             if (/No module named yt_dlp/i.test(stderr)) {
                 msg = 'Falta yt-dlp en Python. Ejecuta: python -m pip install -U yt-dlp';
             } else if (platform === 'youtube' && /Sign in to confirm you're not a bot/i.test(stderr)) {
-                msg = 'YouTube ha bloqueado o rotado las cookies. Abre una ventana de incógnito, inicia sesión, visita youtube.com/robots.txt en esa misma pestaña, exporta solo las cookies de youtube.com y cierra la ventana de incógnito. Reemplaza cookies.txt sin volver a abrir esa sesión.';
+                msg = 'YouTube ha bloqueado esta descarga por sospechar tráfico automatizado (pasa de forma intermitente al descargar desde un servidor). Prueba de nuevo en un momento o con otro vídeo; si sigue fallando siempre, puede que las cookies necesiten renovarse.';
             } else if (platform === 'youtube') {
                 msg = 'No se pudo obtener la información de YouTube. Comprueba el enlace y, si continúa fallando, inicia sesión en YouTube y reemplaza cookies.txt por cookies recién exportadas.';
             } else if (platform === 'instagram') {
@@ -249,7 +249,7 @@ app.get('/api/download', requireAuth, apiLimiter, (req, res) => {
         }
         if (platform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
+            args.push('--extractor-args', 'youtube:player_client=android,tv_embedded,web_embedded');
         }
 
         args.push('-o', `${outputPath}.%(ext)s`, videoUrl);
@@ -351,7 +351,7 @@ app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
         }
         if (tPlatform === 'youtube') {
             args.push('--js-runtimes', 'node');
-            args.push('--extractor-args', 'youtube:player_client=android,web_embedded');
+            args.push('--extractor-args', 'youtube:player_client=android,tv_embedded,web_embedded');
         }
         args.push('-o', `${outputPath}.%(ext)s`, videoUrl);
         return args;
