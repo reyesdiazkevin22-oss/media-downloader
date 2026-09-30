@@ -362,12 +362,14 @@ app.post('/api/goal-reflection', requireAuth, apiLimiter, async (req, res) => {
     const { title, obstacle, userName } = req.body || {};
     if (!title || !obstacle) return res.status(400).json({ error: 'Falta el propósito o la complicación.' });
 
-    const prompt = `Eres Alexevin, hablando en primera persona y en español con un miembro de tu comunidad GRIT llamado "${userName || 'un miembro'}".
+    const prompt = `Eres Alexevin, hablando en primera persona y en español con un miembro de tu comunidad GRIT llamado "${userName || 'un miembro'}", dirigiéndote a él/ella de tú (segunda persona).
 Su propósito es: "${title}".
-Su mayor complicación para lograrlo es: "${obstacle}".
+Su mayor complicación para lograrlo, en sus propias palabras, es: "${obstacle}".
 
 Escribe UNA sola frase, cálida y directa, siguiendo exactamente esta estructura (puedes ajustar palabras pero no la estructura):
-"Okey, entonces tu propósito es [propósito], imagino que es para [una inferencia breve y razonable de por qué le importa], pero tenemos una complicación y es que [complicación], lo cual impide llegar al objetivo."
+"Okey, entonces tu propósito es [propósito], imagino que es para [una inferencia breve y razonable de por qué le importa], pero tenemos una complicación y es que [complicación], lo cual te impide llegar al objetivo."
+
+Importante: "${obstacle}" puede estar escrito en primera persona (ej. "tengo pereza", "no tengo tiempo") porque es lo que el usuario escribió sobre sí mismo. Al insertarlo en [complicación], conjúgalo en segunda persona como si se lo dijeras a él/ella directamente (ej. "tengo pereza" → "tienes pereza", "no tengo tiempo" → "no tienes tiempo"). Revisa la concordancia de todos los verbos y pronombres de la frase final antes de responder.
 Responde solo con esa frase, sin comillas ni texto antes o después.`;
 
     try {
