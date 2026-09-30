@@ -19,6 +19,11 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const PUBLIC_MODE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const supabase = PUBLIC_MODE ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+// Cliente con permisos elevados, solo para el trabajo en segundo plano del
+// Daruma (leer/escribir sin ser un usuario concreto). Nunca se expone al cliente.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAdmin = (PUBLIC_MODE && SUPABASE_SERVICE_ROLE_KEY) ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) : null;
+
 // ── cookies.txt desde variable de entorno (Railway) ──────────────────
 // En Railway no hay archivo local: pega el contenido completo de tu cookies.txt
 // en la variable de entorno COOKIES_TXT y aquí se escribe a disco al arrancar.
@@ -58,6 +63,8 @@ app.use(cors({
         }
         : true
 }));
+
+app.use(express.json()); // solo para /api/goal-reflection; las rutas de descarga usan query params.
 
 // ── Rate limiting: solo tiene sentido en modo público (varios miembros compartiendo el servidor) ──
 const apiLimiter = PUBLIC_MODE
@@ -320,6 +327,48 @@ app.get('/api/download', requireAuth, apiLimiter, (req, res) => {
     });
 });
 
+// ── Gemini: motor de IA del Daruma GRIT (reflexión en vivo + estrategia a 24h) ──
+async function callGemini(prompt) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('Falta configurar GEMINI_API_KEY en el servidor.');
+
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+
+    if (!response.ok) throw new Error(`Gemini respondió ${response.status}: ${await response.text()}`);
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) throw new Error('Respuesta vacía de Gemini.');
+    return text;
+}
+
+// API: reflexión en vivo del Daruma GRIT (paso 6→7 del wizard de propósitos)
+app.post('/api/goal-reflection', requireAuth, apiLimiter, async (req, res) => {
+    const { title, obstacle, userName } = req.body || {};
+    if (!title || !obstacle) return res.status(400).json({ error: 'Falta el propósito o la complicación.' });
+
+    const prompt = `Eres Alexevin, hablando en primera persona y en español con un miembro de tu comunidad GRIT llamado "${userName || 'un miembro'}".
+Su propósito es: "${title}".
+Su mayor complicación para lograrlo es: "${obstacle}".
+
+Escribe UNA sola frase, cálida y directa, siguiendo exactamente esta estructura (puedes ajustar palabras pero no la estructura):
+"Okey, entonces tu propósito es [propósito], imagino que es para [una inferencia breve y razonable de por qué le importa], pero tenemos una complicación y es que [complicación], lo cual impide llegar al objetivo."
+Responde solo con esa frase, sin comillas ni texto antes o después.`;
+
+    try {
+        const reflection = await callGemini(prompt);
+        res.json({ reflection });
+    } catch (err) {
+        console.error('Error generando reflexión:', err);
+        res.status(500).json({ error: 'No se pudo generar la reflexión. Inténtalo de nuevo.' });
+    }
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
@@ -500,8 +549,116 @@ app.use((err, req, res, next) => {
     next();
 });
 
+// ── Daruma GRIT: trabajos en segundo plano (recordatorios + entrega de estrategia a 24h) ──
+function escapeHtml(value) {
+    return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function sendEmail(to, subject, html) {
+    if (!process.env.RESEND_API_KEY) {
+        console.warn('RESEND_API_KEY no configurada, no se pudo enviar el correo:', subject);
+        return;
+    }
+    const from = process.env.RESEND_FROM_EMAIL || 'GRIT <onboarding@resend.dev>';
+    const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ from, to, subject, html })
+    });
+    if (!response.ok) console.error('Error enviando email con Resend:', response.status, await response.text());
+}
+
+async function sendDueReminders() {
+    const { data: dueGoals, error } = await supabaseAdmin
+        .from('member_goals')
+        .select('id, user_id, title, reminder_cadence_days, last_reminder_sent_at')
+        .eq('status', 'active')
+        .eq('reminder_enabled', true);
+    if (error) return console.error('Error consultando recordatorios pendientes:', error.message);
+
+    const now = Date.now();
+    for (const goal of dueGoals || []) {
+        const cadenceMs = goal.reminder_cadence_days * 24 * 60 * 60 * 1000;
+        const last = goal.last_reminder_sent_at ? new Date(goal.last_reminder_sent_at).getTime() : 0;
+        if (now - last < cadenceMs) continue;
+
+        const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
+        const email = userData?.user?.email;
+        if (!email) continue;
+
+        await sendEmail(
+            email,
+            '¿Cómo vas con tu propósito?',
+            `<p>Hola,</p><p>¿Cómo vas con "${escapeHtml(goal.title)}"? Entra a GRIT y cuéntame en un check-in cómo lo llevas.</p>`
+        );
+        await supabaseAdmin.from('member_goals').update({ last_reminder_sent_at: new Date().toISOString() }).eq('id', goal.id);
+    }
+}
+
+async function generateStrategySteps(goal) {
+    const prompt = `Eres Alexevin, mentor personal dentro de la comunidad GRIT. Un miembro quiere lograr: "${goal.title}".
+Su complicación principal es: "${goal.obstacle || 'no especificada'}".
+${goal.reflection_text ? `Ya le dijiste esto: "${goal.reflection_text}".` : ''}
+
+Genera una estrategia concreta de 4 a 6 pasos para lograr el propósito, teniendo en cuenta la complicación. Responde SOLO con JSON válido: un array de objetos con "title" (corto, imperativo) y "description" (1-2 frases), sin texto antes ni después. Ejemplo:
+[{"title":"...","description":"..."}]`;
+
+    const text = await callGemini(prompt);
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+}
+
+async function sendDueStrategies() {
+    const { data: dueGoals, error } = await supabaseAdmin
+        .from('member_goals')
+        .select('id, user_id, title, obstacle, reflection_text')
+        .eq('status', 'active')
+        .is('strategy_sent_at', null)
+        .not('strategy_ready_at', 'is', null)
+        .lte('strategy_ready_at', new Date().toISOString());
+    if (error) return console.error('Error consultando estrategias pendientes:', error.message);
+
+    for (const goal of dueGoals || []) {
+        try {
+            const steps = await generateStrategySteps(goal);
+            if (!Array.isArray(steps) || !steps.length) continue;
+
+            await supabaseAdmin.from('goal_steps').insert(
+                steps.map((step, index) => ({ goal_id: goal.id, step_number: index + 1, title: step.title, description: step.description || null }))
+            );
+
+            const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
+            const email = userData?.user?.email;
+            if (email) {
+                const stepsHtml = steps.map(s => `<li><strong>${escapeHtml(s.title)}</strong>${s.description ? `: ${escapeHtml(s.description)}` : ''}</li>`).join('');
+                await sendEmail(
+                    email,
+                    'Tu estrategia para tu propósito ya está lista',
+                    `<p>Hola,</p><p>Aquí tienes los pasos para lograr "${escapeHtml(goal.title)}":</p><ol>${stepsHtml}</ol><p>Entra a GRIT para irlos marcando.</p>`
+                );
+            }
+
+            await supabaseAdmin.from('member_goals').update({ strategy_sent_at: new Date().toISOString() }).eq('id', goal.id);
+        } catch (err) {
+            console.error('Error generando estrategia para el objetivo', goal.id, err);
+        }
+    }
+}
+
+async function runBackgroundJobs() {
+    if (!supabaseAdmin) return; // Sin SUPABASE_SERVICE_ROLE_KEY configurada, no hay nada que hacer aquí.
+    await sendDueReminders();
+    await sendDueStrategies();
+}
+
 app.listen(PORT, () => {
     console.log(`Servidor iniciado en http://localhost:${PORT}`);
     console.log(`Plataformas soportadas: YouTube, Instagram, TikTok`);
     console.log(`Modo: ${PUBLIC_MODE ? `PÚBLICO (login requerido, origen permitido: ${ALLOWED_ORIGIN})` : 'LOCAL (sin restricciones)'}`);
+
+    if (supabaseAdmin) {
+        console.log('Daruma GRIT: trabajos en segundo plano activados (cada hora).');
+        runBackgroundJobs().catch(err => console.error('Error en trabajos en segundo plano (arranque):', err));
+        setInterval(() => runBackgroundJobs().catch(err => console.error('Error en trabajos en segundo plano:', err)), 60 * 60 * 1000);
+    }
 });
