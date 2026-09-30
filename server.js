@@ -9,6 +9,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.set('trust proxy', 1); // Railway pone la app detrás de un proxy; sin esto, express-rate-limit no identifica bien la IP real.
 
 // ── Modo público vs. local ──────────────────────────────────────────
 // Si hay credenciales de Supabase configuradas (Railway/producción), esta API
@@ -328,7 +329,9 @@ app.get('/api/download', requireAuth, apiLimiter, (req, res) => {
 });
 
 // ── Gemini: motor de IA del Daruma GRIT (reflexión en vivo + estrategia a 24h) ──
-async function callGemini(prompt) {
+// Gemini a veces responde 503 "high demand" de forma pasajera — reintentamos un
+// par de veces con una pequeña espera en vez de fallarle al usuario a la primera.
+async function callGemini(prompt, attempt = 1) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('Falta configurar GEMINI_API_KEY en el servidor.');
 
@@ -339,7 +342,14 @@ async function callGemini(prompt) {
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
     });
 
-    if (!response.ok) throw new Error(`Gemini respondió ${response.status}: ${await response.text()}`);
+    if (!response.ok) {
+        const errorText = await response.text();
+        if (response.status === 503 && attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+            return callGemini(prompt, attempt + 1);
+        }
+        throw new Error(`Gemini respondió ${response.status}: ${errorText}`);
+    }
 
     const data = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
