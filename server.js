@@ -446,12 +446,12 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
                     const askedToBeNotified = meta.purpose_doll_email_consent === true;
                     const bodyText = askedToBeNotified
                         ? `Me pediste que te avisara cuando la nueva función de los propósitos estuviera lista. Pues ya está disponible, me gustaría que la probaras y me respondieras a este correo contándome qué te ha parecido.`
-                        : `Te escribo porque acabamos de lanzar algo nuevo en GRIT: el muñeco de los propósitos, una función para ayudarte a comprometerte con una meta y llevarla hasta el final, paso a paso. Me encantaría que la probaras y me respondieras a este correo contándome qué te ha parecido.`;
+                        : `¿Cómo se supone que lo vas a lograr, si ni siquiera has probado el muñeco de los propósitos? Te doy una estrategia exacta de cómo conseguirlo, y sí, como todo en la web, es gratis.`;
                     await sendEmail(
                         user.email,
                         'Ya está listo: el muñeco de los propósitos',
                         emailShell({
-                            preheader: askedToBeNotified ? 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.' : 'Acabamos de lanzar algo nuevo en GRIT.',
+                            preheader: askedToBeNotified ? 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.' : '¿Cómo lo vas a lograr si ni siquiera lo has probado?',
                             bodyHtml: `
           <tr>
             <td style="padding:16px 40px 0; text-align:center;">
