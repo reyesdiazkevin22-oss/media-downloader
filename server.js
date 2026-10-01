@@ -369,7 +369,9 @@ Su mayor complicación para lograrlo, en sus propias palabras, es: "${obstacle}"
 Escribe UNA sola frase, cálida y directa, siguiendo exactamente esta estructura (puedes ajustar palabras pero no la estructura):
 "Okey, entonces tu propósito es [propósito], imagino que es para [una inferencia breve y razonable de por qué le importa], pero tenemos una complicación y es que [complicación], lo cual te impide llegar al objetivo."
 
-Importante: "${obstacle}" puede estar escrito en primera persona (ej. "tengo pereza", "no tengo tiempo") porque es lo que el usuario escribió sobre sí mismo. Al insertarlo en [complicación], conjúgalo en segunda persona como si se lo dijeras a él/ella directamente (ej. "tengo pereza" → "tienes pereza", "no tengo tiempo" → "no tienes tiempo"). Revisa la concordancia de todos los verbos y pronombres de la frase final antes de responder.
+Importante sobre [complicación]: "${obstacle}" es lo que el usuario escribió tal cual, con sus propias palabras — puede venir en primera persona, suelto, o con una redacción que no fluye bien si se inserta directo. No lo copies ni lo pegues literal: redáctalo de nuevo como una frase natural en segunda persona, razonando cuál es la idea real detrás de lo que escribió y expresándola con conectores naturales (por ejemplo, si hay una idea de contraste como "ya mejoro pero nunca dura", usa algo como "aunque..., nunca..." en vez de encadenar comas). Mantén el significado exacto, pero la redacción final debe sonar como si Alexevin lo hubiera pensado y dicho así, no como un recorte del texto original.
+Ejemplo: si "${obstacle}" fuera "ya vas mejorando, pero nunca por 3 meses", [complicación] debería quedar algo como "aunque vas mejorando, nunca lo has hecho por 3 meses" — no "ya vas mejorando, pero nunca por 3 meses" tal cual.
+Revisa la concordancia de todos los verbos y pronombres de la frase final antes de responder.
 Responde solo con esa frase, sin comillas ni texto antes o después.`;
 
     try {
