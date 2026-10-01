@@ -409,6 +409,63 @@ app.post('/api/notify-pending-strategy', requireAuth, apiLimiter, async (req, re
     }
 });
 
+// API: anuncio de un solo uso a quien pidió que le avisáramos cuando el muñeco de los
+// propósitos estuviera listo (consentimiento guardado en user_metadata, capturado antes
+// de que la función existiera de verdad). Protegido por admin (misma tabla que usa
+// is_grit_admin() en Supabase) — lo llama Alexevin una vez, a mano, no es un job automático.
+// Idempotente: marca a cada quien como avisado, así que correrlo de nuevo no reenvía nada.
+app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+
+    try {
+        let sent = 0, page = 1;
+        const perPage = 200;
+        while (true) {
+            const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+            if (error) throw error;
+            const users = data?.users || [];
+            if (!users.length) break;
+
+            for (const user of users) {
+                const meta = user.user_metadata || {};
+                if (meta.purpose_doll_email_consent !== true || meta.purpose_doll_announced_at) continue;
+
+                const userName = meta.full_name || user.email.split('@')[0];
+                await sendEmail(
+                    user.email,
+                    'Ya está listo: el muñeco de los propósitos',
+                    emailShell({
+                        preheader: 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.',
+                        bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0; text-align:center;">
+              <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
+                Hola <strong style="color:#ffffff;">${escapeHtml(userName)}</strong>! Me pediste que te avisara cuando la nueva función de los propósitos estuviera lista. Pues ya está disponible, me gustaría que la probaras y me respondieras a este correo contándome qué te ha parecido.
+              </p>
+            </td>
+          </tr>
+          ${emailCtaButton('Probar nueva función', GRIT_SITE_URL)}`
+                    })
+                );
+
+                await supabaseAdmin.auth.admin.updateUserById(user.id, {
+                    user_metadata: { ...meta, purpose_doll_announced_at: new Date().toISOString() }
+                });
+                sent++;
+            }
+
+            if (users.length < perPage) break;
+            page++;
+        }
+        res.json({ ok: true, sent });
+    } catch (err) {
+        console.error('Error en el anuncio del lanzamiento:', err);
+        res.status(500).json({ error: 'No se pudo completar el anuncio.' });
+    }
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
