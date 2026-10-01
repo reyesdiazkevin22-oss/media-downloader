@@ -420,7 +420,7 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
     if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
 
     try {
-        let sent = 0, page = 1;
+        let sent = 0, failed = 0, page = 1;
         const perPage = 200;
         while (true) {
             const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
@@ -432,13 +432,14 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
                 const meta = user.user_metadata || {};
                 if (meta.purpose_doll_email_consent !== true || meta.purpose_doll_announced_at) continue;
 
-                const userName = meta.full_name || user.email.split('@')[0];
-                await sendEmail(
-                    user.email,
-                    'Ya está listo: el muñeco de los propósitos',
-                    emailShell({
-                        preheader: 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.',
-                        bodyHtml: `
+                try {
+                    const userName = meta.full_name || user.email.split('@')[0];
+                    await sendEmail(
+                        user.email,
+                        'Ya está listo: el muñeco de los propósitos',
+                        emailShell({
+                            preheader: 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.',
+                            bodyHtml: `
           <tr>
             <td style="padding:16px 40px 0; text-align:center;">
               <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
@@ -447,19 +448,23 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
             </td>
           </tr>
           ${emailCtaButton('Probar nueva función', GRIT_SITE_URL)}`
-                    })
-                );
+                        })
+                    );
 
-                await supabaseAdmin.auth.admin.updateUserById(user.id, {
-                    user_metadata: { ...meta, purpose_doll_announced_at: new Date().toISOString() }
-                });
-                sent++;
+                    await supabaseAdmin.auth.admin.updateUserById(user.id, {
+                        user_metadata: { ...meta, purpose_doll_announced_at: new Date().toISOString() }
+                    });
+                    sent++;
+                } catch (err) {
+                    failed++;
+                    console.error('Error avisando a', user.email, ':', err.message);
+                }
             }
 
             if (users.length < perPage) break;
             page++;
         }
-        res.json({ ok: true, sent });
+        res.json({ ok: true, sent, failed });
     } catch (err) {
         console.error('Error en el anuncio del lanzamiento:', err);
         res.status(500).json({ error: 'No se pudo completar el anuncio.' });
@@ -728,7 +733,15 @@ async function sendEmail(to, subject, html) {
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify({ from, to, subject, html })
     });
-    if (!response.ok) console.error('Error enviando email con Resend:', response.status, await response.text());
+    if (!response.ok) {
+        // Antes esto solo se logueaba — quien llamaba a sendEmail nunca se enteraba del
+        // fallo y seguía adelante como si se hubiera entregado (marcando "enviado",
+        // "avisado", etc. aunque Resend lo hubiera rechazado). Lanzar el error es lo que
+        // permite a cada llamador decidir si reintentar, no marcar como hecho, etc.
+        const errText = await response.text();
+        console.error('Error enviando email con Resend:', response.status, errText);
+        throw new Error(`Resend ${response.status}: ${errText}`);
+    }
 }
 
 async function sendDueReminders() {
@@ -741,20 +754,21 @@ async function sendDueReminders() {
 
     const now = Date.now();
     for (const goal of dueGoals || []) {
-        const cadenceMs = goal.reminder_cadence_days * 24 * 60 * 60 * 1000;
-        const last = goal.last_reminder_sent_at ? new Date(goal.last_reminder_sent_at).getTime() : 0;
-        if (now - last < cadenceMs) continue;
+        try {
+            const cadenceMs = goal.reminder_cadence_days * 24 * 60 * 60 * 1000;
+            const last = goal.last_reminder_sent_at ? new Date(goal.last_reminder_sent_at).getTime() : 0;
+            if (now - last < cadenceMs) continue;
 
-        const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
-        const email = userData?.user?.email;
-        if (!email) continue;
+            const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
+            const email = userData?.user?.email;
+            if (!email) continue;
 
-        await sendEmail(
-            email,
-            '¿Cómo vas con tu propósito?',
-            emailShell({
-                preheader: 'Un check-in rápido para seguir en movimiento.',
-                bodyHtml: `
+            await sendEmail(
+                email,
+                '¿Cómo vas con tu propósito?',
+                emailShell({
+                    preheader: 'Un check-in rápido para seguir en movimiento.',
+                    bodyHtml: `
           <tr>
             <td style="padding:16px 40px 0; text-align:center;">
               <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
@@ -763,9 +777,12 @@ async function sendDueReminders() {
             </td>
           </tr>
           ${emailCtaButton('Hacer check-in', GRIT_SITE_URL)}`
-            })
-        );
-        await supabaseAdmin.from('member_goals').update({ last_reminder_sent_at: new Date().toISOString() }).eq('id', goal.id);
+                })
+            );
+            await supabaseAdmin.from('member_goals').update({ last_reminder_sent_at: new Date().toISOString() }).eq('id', goal.id);
+        } catch (err) {
+            console.error('Error enviando recordatorio para goal', goal.id, err.message);
+        }
     }
 }
 
