@@ -566,6 +566,72 @@ function escapeHtml(value) {
     return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+const GRIT_SITE_URL = 'https://www.proyectogrit.com/propositos.html';
+
+// Mismo lenguaje visual que data/email-confirmacion.html (la plantilla de Supabase ya en
+// uso): tarjeta oscura basada en <table> (compatibilidad con clientes de correo), UTF-8
+// explícito. Se añade una franja granate arriba, propia del Daruma GRIT.
+function emailShell({ preheader, bodyHtml }) {
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>Proyecto GRIT</title>
+</head>
+<body style="margin:0; padding:0; background-color:#000000; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0;">${escapeHtml(preheader)}</div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#000000; padding:40px 16px;">
+    <tr>
+      <td align="center">
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px; background-color:#101010; border:1px solid rgba(255,255,255,0.06); border-radius:14px; overflow:hidden;">
+
+          <tr><td style="height:3px; background-color:#c9363b; font-size:0; line-height:0;">&nbsp;</td></tr>
+
+          <tr>
+            <td style="padding:32px 40px 0; text-align:center;">
+              <img src="https://proyectogrit.com/public/branding/logohorizontal.PNG" alt="Proyecto GRIT" style="max-width:240px; height:auto; display:inline-block;">
+            </td>
+          </tr>
+
+          ${bodyHtml}
+
+          <tr>
+            <td style="padding:36px 40px 0;">
+              <div style="border-top:1px solid rgba(255,255,255,0.06);"></div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:20px 40px 40px; text-align:center;">
+              <p style="margin:0; font-size:11.5px; line-height:1.6; color:#55555e;">
+                Proyecto GRIT · Alexevin
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`;
+}
+
+function emailCtaButton(label, url) {
+    return `<tr>
+    <td style="padding:28px 40px 0; text-align:center;">
+      <a href="${url}" style="display:inline-block; padding:14px 42px; background-color:#ffffff; color:#000000; font-size:13.5px; font-weight:600; text-decoration:none; border-radius:6px;">${escapeHtml(label)}</a>
+    </td>
+  </tr>`;
+}
+
 async function sendEmail(to, subject, html) {
     if (!process.env.RESEND_API_KEY) {
         console.warn('RESEND_API_KEY no configurada, no se pudo enviar el correo:', subject);
@@ -601,58 +667,63 @@ async function sendDueReminders() {
         await sendEmail(
             email,
             '¿Cómo vas con tu propósito?',
-            `<p>Hola,</p><p>¿Cómo vas con "${escapeHtml(goal.title)}"? Entra a GRIT y cuéntame en un check-in cómo lo llevas.</p>`
+            emailShell({
+                preheader: 'Un check-in rápido para seguir en movimiento.',
+                bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0; text-align:center;">
+              <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
+                ¿Cómo vas con <strong style="color:#ffffff;">"${escapeHtml(goal.title)}"</strong>? Cuéntame en un check-in cómo lo llevas — seguimos esto juntos.
+              </p>
+            </td>
+          </tr>
+          ${emailCtaButton('Hacer check-in', GRIT_SITE_URL)}`
+            })
         );
         await supabaseAdmin.from('member_goals').update({ last_reminder_sent_at: new Date().toISOString() }).eq('id', goal.id);
     }
 }
 
-async function generateStrategySteps(goal) {
-    const prompt = `Eres Alexevin, mentor personal dentro de la comunidad GRIT. Un miembro quiere lograr: "${goal.title}".
-Su complicación principal es: "${goal.obstacle || 'no especificada'}".
-${goal.reflection_text ? `Ya le dijiste esto: "${goal.reflection_text}".` : ''}
-
-Genera una estrategia concreta de 4 a 6 pasos para lograr el propósito, teniendo en cuenta la complicación. Responde SOLO con JSON válido: un array de objetos con "title" (corto, imperativo) y "description" (1-2 frases), sin texto antes ni después. Ejemplo:
-[{"title":"...","description":"..."}]`;
-
-    const text = await callGemini(prompt);
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    return JSON.parse(jsonMatch ? jsonMatch[0] : text);
-}
-
-async function sendDueStrategies() {
-    const { data: dueGoals, error } = await supabaseAdmin
+// La estrategia ya no la genera la IA: Alexevin sube el PDF a mano a Supabase Storage y
+// pega la URL en member_goals.strategy_pdf_url (ver supabase-setup.sql). Este job ya no
+// dispara por tiempo ("24 horas") — dispara en cuanto el PDF está realmente adjunto, lo
+// cual Alexevin hace a propósito antes de esas 24h para dar sensación de rapidez.
+async function sendReadyStrategyEmails() {
+    const { data: readyGoals, error } = await supabaseAdmin
         .from('member_goals')
-        .select('id, user_id, title, obstacle, reflection_text')
+        .select('id, user_id, title')
         .eq('status', 'active')
         .is('strategy_sent_at', null)
-        .not('strategy_ready_at', 'is', null)
-        .lte('strategy_ready_at', new Date().toISOString());
-    if (error) return console.error('Error consultando estrategias pendientes:', error.message);
+        .not('strategy_pdf_url', 'is', null);
+    if (error) return console.error('Error consultando estrategias listas:', error.message);
 
-    for (const goal of dueGoals || []) {
+    for (const goal of readyGoals || []) {
         try {
-            const steps = await generateStrategySteps(goal);
-            if (!Array.isArray(steps) || !steps.length) continue;
-
-            await supabaseAdmin.from('goal_steps').insert(
-                steps.map((step, index) => ({ goal_id: goal.id, step_number: index + 1, title: step.title, description: step.description || null }))
-            );
-
             const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
             const email = userData?.user?.email;
             if (email) {
-                const stepsHtml = steps.map(s => `<li><strong>${escapeHtml(s.title)}</strong>${s.description ? `: ${escapeHtml(s.description)}` : ''}</li>`).join('');
+                const userName = userData.user.user_metadata?.full_name || email.split('@')[0];
                 await sendEmail(
                     email,
-                    'Tu estrategia para tu propósito ya está lista',
-                    `<p>Hola,</p><p>Aquí tienes los pasos para lograr "${escapeHtml(goal.title)}":</p><ol>${stepsHtml}</ol><p>Entra a GRIT para irlos marcando.</p>`
+                    `Tu estrategia para "${goal.title}" ya está lista`,
+                    emailShell({
+                        preheader: 'Ya puedes verla en tu panel GRIT y empezar.',
+                        bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0; text-align:center;">
+              <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
+                Hola <strong style="color:#ffffff;">${escapeHtml(userName)}</strong>, te dije que te ayudaría y lo voy a hacer, recuerda que hiciste una promesa y te comprometiste a dar tu mejor esfuerzo. Confío en que será así, tu estrategia ya está subida en tu panel GRIT.
+              </p>
+            </td>
+          </tr>
+          ${emailCtaButton('Ver mi estrategia', GRIT_SITE_URL)}`
+                    })
                 );
             }
 
             await supabaseAdmin.from('member_goals').update({ strategy_sent_at: new Date().toISOString() }).eq('id', goal.id);
         } catch (err) {
-            console.error('Error generando estrategia para el objetivo', goal.id, err);
+            console.error('Error avisando la estrategia para el objetivo', goal.id, err);
         }
     }
 }
@@ -660,7 +731,7 @@ async function sendDueStrategies() {
 async function runBackgroundJobs() {
     if (!supabaseAdmin) return; // Sin SUPABASE_SERVICE_ROLE_KEY configurada, no hay nada que hacer aquí.
     await sendDueReminders();
-    await sendDueStrategies();
+    await sendReadyStrategyEmails();
 }
 
 app.listen(PORT, () => {
