@@ -409,10 +409,12 @@ app.post('/api/notify-pending-strategy', requireAuth, apiLimiter, async (req, re
     }
 });
 
-// API: anuncio de un solo uso a quien pidió que le avisáramos cuando el muñeco de los
-// propósitos estuviera listo (consentimiento guardado en user_metadata, capturado antes
-// de que la función existiera de verdad). Protegido por admin (misma tabla que usa
-// is_grit_admin() en Supabase) — lo llama Alexevin una vez, a mano, no es un job automático.
+// API: anuncio del lanzamiento del muñeco de los propósitos a TODOS los usuarios, salvo
+// quien haya pedido explícitamente que no se le avise (purpose_doll_announce_opt_out) y
+// quien ya haya sido avisado antes. A quien sí pidió que le avisáramos (consentimiento
+// capturado antes de que la función existiera) se le manda un copy distinto reconociendo
+// que lo pidió; al resto, un anuncio genérico. Protegido por admin (misma tabla que usa
+// is_grit_admin() en Supabase) — lo llama Alexevin a mano, no es un job automático.
 // Idempotente: marca a cada quien como avisado, así que correrlo de nuevo no reenvía nada.
 app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res) => {
     if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
@@ -434,20 +436,27 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
                 if (testEmail && user.email?.toLowerCase() !== testEmail) continue;
 
                 const meta = user.user_metadata || {};
-                if (!testEmail && (meta.purpose_doll_email_consent !== true || meta.purpose_doll_announced_at)) continue;
+                if (!testEmail) {
+                    if (meta.purpose_doll_announced_at) continue; // ya avisado antes
+                    if (meta.purpose_doll_announce_opt_out === true) continue; // pidió que no se le avisara
+                }
 
                 try {
                     const userName = meta.full_name || user.email.split('@')[0];
+                    const askedToBeNotified = meta.purpose_doll_email_consent === true;
+                    const bodyText = askedToBeNotified
+                        ? `Me pediste que te avisara cuando la nueva función de los propósitos estuviera lista. Pues ya está disponible, me gustaría que la probaras y me respondieras a este correo contándome qué te ha parecido.`
+                        : `Te escribo porque acabamos de lanzar algo nuevo en GRIT: el muñeco de los propósitos, una función para ayudarte a comprometerte con una meta y llevarla hasta el final, paso a paso. Me encantaría que la probaras y me respondieras a este correo contándome qué te ha parecido.`;
                     await sendEmail(
                         user.email,
                         'Ya está listo: el muñeco de los propósitos',
                         emailShell({
-                            preheader: 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.',
+                            preheader: askedToBeNotified ? 'Me pediste que te avisara en cuanto estuviera listo — ya lo está.' : 'Acabamos de lanzar algo nuevo en GRIT.',
                             bodyHtml: `
           <tr>
             <td style="padding:16px 40px 0; text-align:center;">
               <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
-                Hola <strong style="color:#ffffff;">${escapeHtml(userName)}</strong>! Me pediste que te avisara cuando la nueva función de los propósitos estuviera lista. Pues ya está disponible, me gustaría que la probaras y me respondieras a este correo contándome qué te ha parecido.
+                Hola <strong style="color:#ffffff;">${escapeHtml(userName)}</strong>! ${bodyText}
               </p>
             </td>
           </tr>
