@@ -383,6 +383,32 @@ Responde solo con esa frase, sin comillas ni texto antes o después.`;
     }
 });
 
+// API: avisa a Alexevin DE INMEDIATO de que un propósito quedó esperando estrategia, en
+// vez de esperar al barrido por hora — lo llama el wizard justo al cerrarse (finishWizard).
+// El barrido por hora (sendPendingStrategyNotifications) sigue como respaldo, por si esta
+// llamada no llega a completarse (el usuario cierra la pestaña antes de que responda, etc.).
+app.post('/api/notify-pending-strategy', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.json({ ok: true }); // sin SUPABASE_SERVICE_ROLE_KEY, no hay nada que hacer
+    const { goalId } = req.body || {};
+    if (!goalId) return res.status(400).json({ error: 'Falta goalId.' });
+
+    const { data: goal, error } = await supabaseAdmin
+        .from('member_goals')
+        .select('id, user_id, title, obstacle, reflection_text, first_eye_painted_at, strategy_ready_at, admin_notified_at')
+        .eq('id', goalId)
+        .eq('user_id', req.user.id) // solo puede disparar el aviso de su propio objetivo
+        .single();
+    if (error || !goal) return res.status(404).json({ error: 'Objetivo no encontrado.' });
+
+    try {
+        await notifyAdminAboutGoal(goal);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('Error en aviso instantáneo:', err);
+        res.status(500).json({ error: 'No se pudo avisar.' }); // el barrido por hora lo recoge igual
+    }
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
@@ -730,10 +756,85 @@ async function sendReadyStrategyEmails() {
     }
 }
 
+const SUPABASE_PROJECT_REF = 'kjwhdrqiicaztaiaczvy';
+function formatDateTimeEs(value) {
+    return new Date(value).toLocaleString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Avisa a Alexevin (no al usuario) de UN propósito concreto que quedó esperando
+// estrategia — con todo lo necesario para escribirla, y el UPDATE ya armado para cuando
+// suba el PDF. La llama tanto el endpoint instantáneo (justo al cerrar el wizard) como el
+// barrido por hora (respaldo, por si esa llamada instantánea no llegó a completarse).
+async function notifyAdminAboutGoal(goal) {
+    if (!process.env.ADMIN_NOTIFY_EMAIL) return; // sin configurar, no hay a quién avisar
+    if (goal.admin_notified_at) return; // ya se avisó de este
+
+    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
+    const email = userData?.user?.email || '(sin correo)';
+    const userName = userData?.user?.user_metadata?.full_name || email.split('@')[0];
+    const storageUrl = `https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/storage/buckets/strategies`;
+    const updateSql = `update public.member_goals set strategy_pdf_url = '...' where id = '${goal.id}';`;
+
+    await sendEmail(
+        process.env.ADMIN_NOTIFY_EMAIL,
+        `Nueva estrategia por escribir: "${goal.title}" (${userName})`,
+        emailShell({
+            preheader: `${userName} está esperando su estrategia para "${goal.title}".`,
+            bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px; line-height:1.7; color:#b0b0b5;">
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Nombre:</strong> ${escapeHtml(userName)}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Correo:</strong> ${escapeHtml(email)}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Propósito:</strong> ${escapeHtml(goal.title)}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Complicación:</strong> ${escapeHtml(goal.obstacle || '—')}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Reflexión ya enviada:</strong> ${escapeHtml(goal.reflection_text || '—')}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Se comprometió el:</strong> ${formatDateTimeEs(goal.first_eye_painted_at)}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Debe estar lista antes del:</strong> ${formatDateTimeEs(goal.strategy_ready_at)}</td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px 0;">
+              <div style="border-top:1px solid rgba(255,255,255,0.06); padding-top:16px;">
+                <p style="margin:0 0 8px; font-size:12px; color:#777;">Cuando tengas el PDF subido, pega esto en el SQL Editor de Supabase (solo falta la URL):</p>
+                <p style="margin:0; font-family:monospace; font-size:12px; color:#c9363b; background:#0a0a0a; border-radius:6px; padding:12px; word-break:break-all;">${escapeHtml(updateSql)}</p>
+              </div>
+            </td>
+          </tr>
+          ${emailCtaButton('Subir el PDF ahora', storageUrl)}`
+        })
+    );
+
+    await supabaseAdmin.from('member_goals').update({ admin_notified_at: new Date().toISOString() }).eq('id', goal.id);
+}
+
+// Respaldo por hora — recoge cualquier propósito que haya quedado esperando estrategia
+// sin que el aviso instantáneo (ver /api/notify-pending-strategy) haya llegado a avisar.
+async function sendPendingStrategyNotifications() {
+    if (!process.env.ADMIN_NOTIFY_EMAIL) return;
+    const { data: pendingGoals, error } = await supabaseAdmin
+        .from('member_goals')
+        .select('id, user_id, title, obstacle, reflection_text, first_eye_painted_at, strategy_ready_at, admin_notified_at')
+        .eq('status', 'active')
+        .not('strategy_ready_at', 'is', null)
+        .is('admin_notified_at', null);
+    if (error) return console.error('Error consultando propósitos pendientes de aviso:', error.message);
+
+    for (const goal of pendingGoals || []) {
+        try {
+            await notifyAdminAboutGoal(goal);
+        } catch (err) {
+            console.error('Error avisando propósito pendiente', goal.id, err);
+        }
+    }
+}
+
 async function runBackgroundJobs() {
     if (!supabaseAdmin) return; // Sin SUPABASE_SERVICE_ROLE_KEY configurada, no hay nada que hacer aquí.
     await sendDueReminders();
     await sendReadyStrategyEmails();
+    await sendPendingStrategyNotifications();
 }
 
 app.listen(PORT, () => {
