@@ -849,7 +849,10 @@ function formatDateTimeEs(value) {
 // suba el PDF. La llama tanto el endpoint instantáneo (justo al cerrar el wizard) como el
 // barrido por hora (respaldo, por si esa llamada instantánea no llegó a completarse).
 async function notifyAdminAboutGoal(goal) {
-    if (!process.env.ADMIN_NOTIFY_EMAIL) return; // sin configurar, no hay a quién avisar
+    if (!process.env.ADMIN_NOTIFY_EMAIL) {
+        console.warn('ADMIN_NOTIFY_EMAIL no configurada, no se pudo avisar del objetivo', goal.id);
+        return;
+    }
     if (goal.admin_notified_at) return; // ya se avisó de este
 
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(goal.user_id);
@@ -895,7 +898,10 @@ async function notifyAdminAboutGoal(goal) {
 // Respaldo por hora — recoge cualquier propósito que haya quedado esperando estrategia
 // sin que el aviso instantáneo (ver /api/notify-pending-strategy) haya llegado a avisar.
 async function sendPendingStrategyNotifications() {
-    if (!process.env.ADMIN_NOTIFY_EMAIL) return;
+    if (!process.env.ADMIN_NOTIFY_EMAIL) {
+        console.warn('ADMIN_NOTIFY_EMAIL no configurada, el barrido por hora no avisará a nadie.');
+        return;
+    }
     const { data: pendingGoals, error } = await supabaseAdmin
         .from('member_goals')
         .select('id, user_id, title, obstacle, reflection_text, first_eye_painted_at, strategy_ready_at, admin_notified_at')
