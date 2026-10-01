@@ -419,6 +419,8 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
     const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
     if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
 
+    const testEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : null;
+
     try {
         let sent = 0, failed = 0, page = 1;
         const perPage = 200;
@@ -429,8 +431,10 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
             if (!users.length) break;
 
             for (const user of users) {
+                if (testEmail && user.email?.toLowerCase() !== testEmail) continue;
+
                 const meta = user.user_metadata || {};
-                if (meta.purpose_doll_email_consent !== true || meta.purpose_doll_announced_at) continue;
+                if (!testEmail && (meta.purpose_doll_email_consent !== true || meta.purpose_doll_announced_at)) continue;
 
                 try {
                     const userName = meta.full_name || user.email.split('@')[0];
@@ -451,16 +455,21 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
                         })
                     );
 
-                    await supabaseAdmin.auth.admin.updateUserById(user.id, {
-                        user_metadata: { ...meta, purpose_doll_announced_at: new Date().toISOString() }
-                    });
+                    if (!testEmail) {
+                        await supabaseAdmin.auth.admin.updateUserById(user.id, {
+                            user_metadata: { ...meta, purpose_doll_announced_at: new Date().toISOString() }
+                        });
+                    }
                     sent++;
                 } catch (err) {
                     failed++;
                     console.error('Error avisando a', user.email, ':', err.message);
                 }
+
+                if (testEmail) break;
             }
 
+            if (testEmail && sent + failed > 0) break;
             if (users.length < perPage) break;
             page++;
         }
