@@ -975,7 +975,6 @@ async function sendPendingStrategyNotifications() {
 async function runBackgroundJobs() {
     if (!supabaseAdmin) return; // Sin SUPABASE_SERVICE_ROLE_KEY configurada, no hay nada que hacer aquí.
     // Recordatorios "¿Cómo vas con tu propósito?" desactivados a propósito; sendDueReminders() se conserva por si se reactivan.
-    await sendReadyStrategyEmails();
     await sendPendingStrategyNotifications();
 }
 
@@ -988,5 +987,12 @@ app.listen(PORT, () => {
         console.log('Daruma GRIT: trabajos en segundo plano activados (cada hora).');
         runBackgroundJobs().catch(err => console.error('Error en trabajos en segundo plano (arranque):', err));
         setInterval(() => runBackgroundJobs().catch(err => console.error('Error en trabajos en segundo plano:', err)), 60 * 60 * 1000);
+        // La estrategia se envía casi al instante: se revisa cada minuto si Alexevin ya subió algún PDF.
+        let strategyEmailsRunning = false;
+        setInterval(async () => {
+            if (strategyEmailsRunning) return;
+            strategyEmailsRunning = true;
+            try { await sendReadyStrategyEmails(); } catch (err) { console.error('Error enviando estrategias listas:', err); } finally { strategyEmailsRunning = false; }
+        }, 60 * 1000);
     }
 });
