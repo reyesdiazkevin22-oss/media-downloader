@@ -489,6 +489,50 @@ app.post('/api/announce-daruma-launch', requireAuth, apiLimiter, async (req, res
     }
 });
 
+// API: correo manual con el diseño de GRIT. Alexevin escribe el mensaje a mano desde
+// analytics.html y el servidor lo envuelve en la plantilla de marca (Gmail no permite eso).
+app.post('/api/admin-send-email', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+
+    const { to, subject, message, ctaLabel, ctaUrl } = req.body || {};
+    const cleanTo = typeof to === 'string' ? to.trim() : '';
+    const cleanSubject = typeof subject === 'string' ? subject.trim() : '';
+    const cleanMessage = typeof message === 'string' ? message.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTo)) return res.status(400).json({ error: 'Correo inválido.' });
+    if (!cleanSubject || cleanSubject.length > 150) return res.status(400).json({ error: 'El asunto es obligatorio (máx. 150 caracteres).' });
+    if (!cleanMessage || cleanMessage.length > 5000) return res.status(400).json({ error: 'El mensaje es obligatorio (máx. 5000 caracteres).' });
+    const cleanCtaLabel = typeof ctaLabel === 'string' ? ctaLabel.trim().slice(0, 60) : '';
+    const cleanCtaUrl = typeof ctaUrl === 'string' ? ctaUrl.trim() : '';
+    if (cleanCtaLabel && !/^https:\/\/(www\.)?proyectogrit\.com(\/|$)/.test(cleanCtaUrl)) {
+        return res.status(400).json({ error: 'El botón solo puede apuntar a proyectogrit.com.' });
+    }
+
+    const paragraphs = cleanMessage.split(/\n{2,}/).map(p =>
+        `<p style="margin:0 0 14px; font-size:14px; line-height:1.65; color:#b0b0b5; text-align:left;">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`
+    ).join('');
+
+    try {
+        await sendEmail(
+            cleanTo,
+            cleanSubject,
+            emailShell({
+                preheader: cleanMessage.slice(0, 90).replace(/\s+/g, ' '),
+                bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0;">${paragraphs}</td>
+          </tr>
+          ${cleanCtaLabel ? emailCtaButton(cleanCtaLabel, cleanCtaUrl) : ''}`
+            })
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('Error enviando correo manual:', err.message);
+        res.status(502).json({ error: 'Resend rechazó el envío. Mira los logs de Railway.' });
+    }
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
