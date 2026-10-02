@@ -930,7 +930,7 @@ async function sendPendingStrategyNotifications() {
 
 async function runBackgroundJobs() {
     if (!supabaseAdmin) return; // Sin SUPABASE_SERVICE_ROLE_KEY configurada, no hay nada que hacer aquí.
-    await sendDueReminders();
+    // Recordatorios "¿Cómo vas con tu propósito?" desactivados a propósito; sendDueReminders() se conserva por si se reactivan.
     await sendReadyStrategyEmails();
     await sendPendingStrategyNotifications();
 }
