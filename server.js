@@ -749,7 +749,7 @@ async function sendEmail(to, subject, html) {
     const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ from, to, subject, html })
+        body: JSON.stringify({ from, to, subject, html, reply_to: process.env.RESEND_REPLY_TO || 'alexevin@proyectogrit.com' })
     });
     if (!response.ok) {
         // Antes esto solo se logueaba — quien llamaba a sendEmail nunca se enteraba del
