@@ -746,7 +746,7 @@ function emailShell({ preheader, bodyHtml }) {
 
           <tr>
             <td style="padding:32px 40px 0; text-align:center;">
-              <img src="https://proyectogrit.com/public/branding/logohorizontal.PNG" alt="Proyecto GRIT" style="max-width:240px; height:auto; display:inline-block;">
+              <img src="https://www.proyectogrit.com/public/branding/logohorizontal.PNG" alt="Proyecto GRIT" style="max-width:240px; height:auto; display:inline-block;">
             </td>
           </tr>
 
