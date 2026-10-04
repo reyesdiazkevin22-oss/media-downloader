@@ -858,7 +858,9 @@ async function sendReadyStrategyEmails() {
         .select('id, user_id, title')
         .eq('status', 'active')
         .is('strategy_sent_at', null)
-        .not('strategy_pdf_url', 'is', null);
+        .not('strategy_pdf_url', 'is', null)
+        .order('strategy_ready_at', { ascending: true })
+        .limit(1); // uno por minuto: así no salen varios correos a la vez (llegan mejor a la bandeja)
     if (error) return console.error('Error consultando estrategias listas:', error.message);
 
     for (const goal of readyGoals || []) {
