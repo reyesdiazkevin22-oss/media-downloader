@@ -784,7 +784,7 @@ function emailCtaButton(label, url) {
   </tr>`;
 }
 
-async function sendEmail(to, subject, html) {
+async function sendEmail(to, subject, html, text) {
     if (!process.env.RESEND_API_KEY) {
         console.warn('RESEND_API_KEY no configurada, no se pudo enviar el correo:', subject);
         return;
@@ -793,7 +793,7 @@ async function sendEmail(to, subject, html) {
     const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ from, to, subject, html, reply_to: process.env.RESEND_REPLY_TO || 'alexevin@proyectogrit.com' })
+        body: JSON.stringify({ from, to, subject, html, ...(text ? { text } : {}), reply_to: process.env.RESEND_REPLY_TO || 'alexevin@proyectogrit.com' })
     });
     if (!response.ok) {
         // Antes esto solo se logueaba — quien llamaba a sendEmail nunca se enteraba del
@@ -869,22 +869,24 @@ async function sendReadyStrategyEmails() {
             const email = userData?.user?.email;
             if (email) {
                 const userName = userData.user.user_metadata?.full_name || email.split('@')[0];
-                await sendEmail(
-                    email,
-                    `Tu estrategia para "${goal.title}" ya está lista`,
-                    emailShell({
-                        preheader: 'Ya puedes verla en tu panel GRIT y empezar.',
-                        bodyHtml: `
-          <tr>
-            <td style="padding:16px 40px 0; text-align:center;">
-              <p style="margin:0; font-size:14px; line-height:1.65; color:#b0b0b5;">
-                Hola <strong style="color:#ffffff;">${escapeHtml(userName)}</strong>, te dije que te ayudaría y lo voy a hacer, recuerda que hiciste una promesa y te comprometiste a dar tu mejor esfuerzo. Confío en que será así, tu estrategia ya está subida en tu panel GRIT.
-              </p>
-            </td>
-          </tr>
-          ${emailCtaButton('Ver mi estrategia', GRIT_SITE_URL)}`
-                    })
-                );
+                const panelUrl = 'https://www.proyectogrit.com/mi-proposito.html';
+                const plainText = `Hola ${userName},
+
+Tu estrategia para "${goal.title}" ya está subida en tu panel de GRIT. La puedes ver y descargar aquí:
+${panelUrl}
+
+Cuando la leas, cuéntame qué te parece. Solo tienes que responder a este correo.
+
+Un abrazo,
+Alexevin
+Proyecto GRIT`;
+                const plainHtml = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(userName)},</p>
+<p>Tu estrategia para "${escapeHtml(goal.title)}" ya está subida en tu panel de GRIT. La puedes ver y descargar aquí:<br><a href="${panelUrl}">${panelUrl}</a></p>
+<p>Cuando la leas, cuéntame qué te parece. Solo tienes que responder a este correo.</p>
+<p>Un abrazo,<br>Alexevin<br>Proyecto GRIT</p>
+</div>`;
+                await sendEmail(email, 'Estrategia GRIT lista', plainHtml, plainText);
             }
 
             await supabaseAdmin.from('member_goals').update({ strategy_sent_at: new Date().toISOString() }).eq('id', goal.id);
