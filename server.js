@@ -533,6 +533,113 @@ app.post('/api/admin-send-email', requireAuth, apiLimiter, async (req, res) => {
     }
 });
 
+// API: aviso a Alexevin cuando alguien escribe un check-in en su panel. Lo llama el propio
+// panel justo después de guardarlo; solo puede avisar de un check-in suyo.
+app.post('/api/notify-checkin', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.json({ ok: true });
+    const { checkinId } = req.body || {};
+    if (!checkinId) return res.status(400).json({ error: 'Falta checkinId.' });
+
+    const { data: checkin, error } = await supabaseAdmin
+        .from('goal_checkins')
+        .select('id, goal_id, user_id, note, created_at, admin_notified_at')
+        .eq('id', checkinId)
+        .eq('user_id', req.user.id)
+        .single();
+    if (error || !checkin) return res.status(404).json({ error: 'Check-in no encontrado.' });
+    if (checkin.admin_notified_at) return res.json({ ok: true });
+    if (!process.env.ADMIN_NOTIFY_EMAIL) {
+        console.warn('ADMIN_NOTIFY_EMAIL no configurada, no se pudo avisar del check-in', checkin.id);
+        return res.json({ ok: true });
+    }
+
+    try {
+        const { data: goal } = await supabaseAdmin.from('member_goals').select('title').eq('id', checkin.goal_id).single();
+        const { data: userData } = await supabaseAdmin.auth.admin.getUserById(checkin.user_id);
+        const email = userData?.user?.email || '(sin correo)';
+        const userName = userData?.user?.user_metadata?.full_name || email.split('@')[0];
+
+        await sendEmail(
+            process.env.ADMIN_NOTIFY_EMAIL,
+            `Nuevo check-in de ${userName}`,
+            emailShell({
+                preheader: `${userName} te escribió en su panel: ${checkin.note.slice(0, 70)}`,
+                bodyHtml: `
+          <tr>
+            <td style="padding:16px 40px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px; line-height:1.7; color:#b0b0b5;">
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Nombre:</strong> ${escapeHtml(userName)}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Propósito:</strong> ${escapeHtml(goal?.title || '—')}</td></tr>
+                <tr><td style="padding:4px 0;"><strong style="color:#ffffff;">Mensaje:</strong> ${escapeHtml(checkin.note)}</td></tr>
+              </table>
+            </td>
+          </tr>
+          ${emailCtaButton('Responder en el panel', 'https://www.proyectogrit.com/analytics.html')}`
+            })
+        );
+        await supabaseAdmin.from('goal_checkins').update({ admin_notified_at: new Date().toISOString() }).eq('id', checkin.id);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('Error avisando del check-in:', err.message);
+        res.status(500).json({ error: 'No se pudo avisar.' });
+    }
+});
+
+// API: Alexevin responde a un check-in desde analytics.html. La respuesta se guarda (la
+// persona la ve en su panel) y se le manda un aviso por correo para que vuelva a la web.
+app.post('/api/admin-reply-checkin', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+
+    const { checkinId, message } = req.body || {};
+    const cleanMessage = typeof message === 'string' ? message.trim() : '';
+    if (!checkinId) return res.status(400).json({ error: 'Falta checkinId.' });
+    if (!cleanMessage || cleanMessage.length > 2000) return res.status(400).json({ error: 'El mensaje es obligatorio (máx. 2000 caracteres).' });
+
+    const { data: checkin, error } = await supabaseAdmin.from('goal_checkins').select('id, goal_id, user_id').eq('id', checkinId).single();
+    if (error || !checkin) return res.status(404).json({ error: 'Check-in no encontrado.' });
+
+    const { data: reply, error: insertError } = await supabaseAdmin
+        .from('goal_checkin_replies')
+        .insert({ checkin_id: checkin.id, goal_id: checkin.goal_id, user_id: checkin.user_id, message: cleanMessage })
+        .select('id')
+        .single();
+    if (insertError) {
+        console.error('Error guardando la respuesta:', insertError.message);
+        return res.status(500).json({ error: 'No se pudo guardar la respuesta.' });
+    }
+
+    let emailed = false;
+    try {
+        const { data: userData } = await supabaseAdmin.auth.admin.getUserById(checkin.user_id);
+        const email = userData?.user?.email;
+        if (email) {
+            const userName = userData.user.user_metadata?.full_name || email.split('@')[0];
+            const panelUrl = 'https://www.proyectogrit.com/mi-proposito.html';
+            const plainText = `Hola ${userName},
+
+Te dejé un mensaje en tu panel de GRIT. Lo puedes leer aquí:
+${panelUrl}
+
+Un abrazo,
+Alexevin
+Proyecto GRIT`;
+            const plainHtml = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(userName)},</p>
+<p>Te dejé un mensaje en tu panel de GRIT. Lo puedes leer aquí:<br><a href="${panelUrl}">${panelUrl}</a></p>
+<p>Un abrazo,<br>Alexevin<br>Proyecto GRIT</p>
+</div>`;
+            await sendEmail(email, 'Te dejé un mensaje en tu panel de GRIT', plainHtml, plainText);
+            await supabaseAdmin.from('goal_checkin_replies').update({ user_notified_at: new Date().toISOString() }).eq('id', reply.id);
+            emailed = true;
+        }
+    } catch (err) {
+        console.error('Respuesta guardada pero el aviso por correo falló:', err.message);
+    }
+    res.json({ ok: true, emailed });
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
