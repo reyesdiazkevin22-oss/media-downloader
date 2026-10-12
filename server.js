@@ -627,7 +627,7 @@ Proyecto GRIT`;
 <p>Hola ${escapeHtml(userName)}, te acabo de responder al mensaje que me enviaste, lo puedes leer aquí:<br><a href="${panelUrl}">${panelUrl}</a></p>
 <p>Un abrazo,<br>Alexevin<br>Proyecto GRIT</p>
 </div>`;
-            await sendEmail(email, 'Te dejé un mensaje en tu panel de GRIT', plainHtml, plainText);
+            await sendEmail(email, 'Te respondí en GRIT', plainHtml, plainText);
             await supabaseAdmin.from('goal_checkin_replies').update({ user_notified_at: new Date().toISOString() }).eq('id', reply.id);
             emailed = true;
         }
