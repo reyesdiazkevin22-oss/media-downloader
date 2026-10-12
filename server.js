@@ -617,17 +617,14 @@ app.post('/api/admin-reply-checkin', requireAuth, apiLimiter, async (req, res) =
         if (email) {
             const userName = userData.user.user_metadata?.full_name || email.split('@')[0];
             const panelUrl = 'https://www.proyectogrit.com/mi-proposito.html';
-            const plainText = `Hola ${userName},
-
-Te dejé un mensaje en tu panel de GRIT. Lo puedes leer aquí:
+            const plainText = `Hola ${userName}, te acabo de responder al mensaje que me enviaste, lo puedes leer aquí:
 ${panelUrl}
 
 Un abrazo,
 Alexevin
 Proyecto GRIT`;
             const plainHtml = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
-<p>Hola ${escapeHtml(userName)},</p>
-<p>Te dejé un mensaje en tu panel de GRIT. Lo puedes leer aquí:<br><a href="${panelUrl}">${panelUrl}</a></p>
+<p>Hola ${escapeHtml(userName)}, te acabo de responder al mensaje que me enviaste, lo puedes leer aquí:<br><a href="${panelUrl}">${panelUrl}</a></p>
 <p>Un abrazo,<br>Alexevin<br>Proyecto GRIT</p>
 </div>`;
             await sendEmail(email, 'Te dejé un mensaje en tu panel de GRIT', plainHtml, plainText);
