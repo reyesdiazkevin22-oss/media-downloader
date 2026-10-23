@@ -637,6 +637,115 @@ Proyecto GRIT`;
     res.json({ ok: true, emailed });
 });
 
+// ── Aviso por correo de las publicaciones de Alexevin en el muro ──────────────────────
+const crypto = require('crypto');
+const API_PUBLIC_URL = process.env.API_PUBLIC_URL || 'https://media-downloader-production-7af6.up.railway.app';
+const wallUnsubToken = (userId) => crypto
+    .createHmac('sha256', process.env.UNSUBSCRIBE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'grit')
+    .update(`wall:${userId}`).digest('hex');
+
+// Baja de los avisos del muro: enlace firmado por usuario, se abre sin iniciar sesión.
+app.get('/api/unsubscribe-wall', async (req, res) => {
+    const userId = String(req.query.u || '');
+    const token = String(req.query.t || '');
+    const expected = wallUnsubToken(userId);
+    const valid = token.length === expected.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+    const page = (msg) => `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Proyecto GRIT</title></head><body style="margin:0;background:#000;color:#ddd;font-family:Arial,Helvetica,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;padding:24px;"><div><p style="font-size:18px;color:#fff;">${msg}</p><p><a href="https://www.proyectogrit.com" style="color:#b7dcc4;">Volver a Proyecto GRIT</a></p></div></body></html>`;
+    if (!supabaseAdmin || !valid) return res.status(400).send(page('Este enlace no es válido.'));
+    try {
+        const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (!data?.user) return res.status(404).send(page('Este enlace no es válido.'));
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+            user_metadata: { ...(data.user.user_metadata || {}), wall_emails_opt_out: true }
+        });
+        res.send(page('Listo: ya no recibirás avisos del muro por correo.'));
+    } catch (err) {
+        console.error('Error dando de baja los avisos del muro:', err.message);
+        res.status(500).send(page('No se pudo completar la baja. Inténtalo de nuevo en unos minutos.'));
+    }
+});
+
+async function sendWallPostEmails(post) {
+    const excerpt = post.content.length > 140 ? `${post.content.slice(0, 140).trim()}…` : post.content;
+    const wallUrl = 'https://www.proyectogrit.com/comunidad.html';
+    let sent = 0, failed = 0, skipped = 0, page = 1;
+    const perPage = 200;
+    while (true) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+        if (error) { console.error('Aviso del muro: no se pudo listar usuarios:', error.message); break; }
+        const users = data?.users || [];
+        if (!users.length) break;
+        for (const user of users) {
+            const meta = user.user_metadata || {};
+            const banned = user.banned_until && new Date(user.banned_until) > new Date();
+            if (!user.email || !user.email_confirmed_at || banned || meta.wall_emails_opt_out === true || user.id === post.user_id) { skipped++; continue; }
+            try {
+                const name = meta.full_name || user.email.split('@')[0];
+                const unsubUrl = `${API_PUBLIC_URL}/api/unsubscribe-wall?u=${user.id}&t=${wallUnsubToken(user.id)}`;
+                const text = `Hola ${name}, acabo de publicar algo en el muro de GRIT:
+
+“${excerpt}”
+
+Lo puedes ver aquí: ${wallUrl}
+
+Un abrazo,
+Alexevin
+Proyecto GRIT
+
+Si no quieres recibir estos avisos, puedes darte de baja aquí: ${unsubUrl}`;
+                const html = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(name)}, acabo de publicar algo en el muro de GRIT:</p>
+<p style="margin:0 0 12px; padding-left:12px; border-left:3px solid #ccc; color:#444;">“${escapeHtml(excerpt)}”</p>
+<p>Lo puedes ver aquí:<br><a href="${wallUrl}">${wallUrl}</a></p>
+<p>Un abrazo,<br>Alexevin<br>Proyecto GRIT</p>
+<p style="font-size:11px; color:#888;">Si no quieres recibir estos avisos, puedes <a href="${unsubUrl}" style="color:#888;">darte de baja aquí</a>.</p>
+</div>`;
+                await sendEmail(user.email, 'Alexevin publicó en el muro de GRIT', html, text, {
+                    'List-Unsubscribe': `<${unsubUrl}>`,
+                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+                });
+                sent++;
+            } catch (err) {
+                failed++;
+                console.error('Aviso del muro: falló el envío a', user.email, err.message);
+            }
+            await new Promise(r => setTimeout(r, 700)); // escalonado: evita límites de Resend y envíos en ráfaga
+        }
+        if (users.length < perPage) break;
+        page++;
+    }
+    console.log(`Aviso del muro ${post.id}: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos.`);
+    if (process.env.ADMIN_NOTIFY_EMAIL) {
+        try {
+            await sendEmail(process.env.ADMIN_NOTIFY_EMAIL, 'Aviso del muro enviado', `<p>Aviso del muro enviado: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos.</p>`);
+        } catch { /* el resumen es solo informativo */ }
+    }
+}
+
+// Alexevin publica en el muro y marca "avisar por correo a todos": se manda el aviso en
+// segundo plano. Solo el administrador puede lanzarlo, y solo para una publicación suya.
+app.post('/api/notify-wall-post', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+    const { postId } = req.body || {};
+    if (!postId) return res.status(400).json({ error: 'Falta postId.' });
+
+    const { data: post, error } = await supabaseAdmin
+        .from('community_posts')
+        .select('id, user_id, content, email_notified_at')
+        .eq('id', postId)
+        .eq('user_id', req.user.id)
+        .single();
+    if (error || !post) return res.status(404).json({ error: 'Publicación no encontrada.' });
+    if (post.email_notified_at) return res.json({ ok: true, alreadySent: true });
+
+    // Se marca antes de empezar para que un doble clic no mande dos veces.
+    await supabaseAdmin.from('community_posts').update({ email_notified_at: new Date().toISOString() }).eq('id', post.id);
+    sendWallPostEmails(post).catch(err => console.error('Error en el aviso del muro:', err.message));
+    res.json({ ok: true, started: true });
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
@@ -888,7 +997,7 @@ function emailCtaButton(label, url) {
   </tr>`;
 }
 
-async function sendEmail(to, subject, html, text) {
+async function sendEmail(to, subject, html, text, headers) {
     if (!process.env.RESEND_API_KEY) {
         console.warn('RESEND_API_KEY no configurada, no se pudo enviar el correo:', subject);
         return;
@@ -897,7 +1006,7 @@ async function sendEmail(to, subject, html, text) {
     const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ from, to, subject, html, ...(text ? { text } : {}), reply_to: process.env.RESEND_REPLY_TO || 'alexevin@proyectogrit.com' })
+        body: JSON.stringify({ from, to, subject, html, ...(text ? { text } : {}), ...(headers ? { headers } : {}), reply_to: process.env.RESEND_REPLY_TO || 'alexevin@proyectogrit.com' })
     });
     if (!response.ok) {
         // Antes esto solo se logueaba — quien llamaba a sendEmail nunca se enteraba del
