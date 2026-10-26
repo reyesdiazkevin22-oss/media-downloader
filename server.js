@@ -799,7 +799,8 @@ app.post('/api/meeting-invite', requireAuth, apiLimiter, async (req, res) => {
     const { data: signup } = await supabaseAdmin.from('meeting_signups')
         .select('id, invite_sent_at').eq('meeting', MEETING_SLUG).eq('user_id', req.user.id).maybeSingle();
     if (!signup) return res.status(404).json({ error: 'No estás apuntado.' });
-    if (signup.invite_sent_at) return res.json({ ok: true, alreadySent: true });
+    const forceResend = req.body?.resend === true;
+    if (signup.invite_sent_at && !forceResend) return res.json({ ok: true, alreadySent: true });
     try {
         const emailed = await sendMeetingInvite(req.user.id);
         res.json({ ok: true, emailed });
