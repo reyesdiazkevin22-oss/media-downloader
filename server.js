@@ -793,12 +793,34 @@ ${calendarUrl ? `<p><a href="${escapeHtml(calendarUrl)}">Añadirla a tu calendar
     return true;
 }
 
+// Aviso a Alexevin cada vez que alguien se apunta (una sola vez por persona).
+async function notifyAdminAboutMeetingSignup(userId, signup) {
+    if (signup.admin_notified_at || !process.env.ADMIN_NOTIFY_EMAIL) return;
+    // Se reclama primero para que dos llamadas seguidas no manden el aviso dos veces.
+    const { data: claimed, error: claimError } = await supabaseAdmin.from('meeting_signups')
+        .update({ admin_notified_at: new Date().toISOString() })
+        .eq('id', signup.id).is('admin_notified_at', null).select('id');
+    if (claimError) { console.warn('Aviso de apuntado: falta la columna admin_notified_at en Supabase.', claimError.message); return; }
+    if (!claimed?.length) return;
+    const { count } = await supabaseAdmin.from('meeting_signups').select('id', { count: 'exact', head: true }).eq('meeting', MEETING_SLUG);
+    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const email = userData?.user?.email || '(sin correo)';
+    const name = userData?.user?.user_metadata?.full_name || email.split('@')[0];
+    await sendEmail(
+        process.env.ADMIN_NOTIFY_EMAIL,
+        `Nuevo apuntado a la reunión: ${name}`,
+        `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;"><p><strong>${escapeHtml(name)}</strong> (${escapeHtml(email)}) se acaba de apuntar a la reunión de miembros.</p><p>Ya son <strong>${count ?? '?'}</strong> apuntados.</p><p><a href="https://www.proyectogrit.com/analytics.html">Ver la lista completa</a></p></div>`,
+        `${name} (${email}) se acaba de apuntar a la reunión de miembros.\n\nYa son ${count ?? '?'} apuntados.\n\nVer la lista completa: https://www.proyectogrit.com/analytics.html`
+    );
+}
+
 // La persona acaba de apuntarse desde la web: se le manda su invitación (solo la suya).
 app.post('/api/meeting-invite', requireAuth, apiLimiter, async (req, res) => {
     if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
     const { data: signup } = await supabaseAdmin.from('meeting_signups')
-        .select('id, invite_sent_at').eq('meeting', MEETING_SLUG).eq('user_id', req.user.id).maybeSingle();
+        .select('*').eq('meeting', MEETING_SLUG).eq('user_id', req.user.id).maybeSingle();
     if (!signup) return res.status(404).json({ error: 'No estás apuntado.' });
+    notifyAdminAboutMeetingSignup(req.user.id, signup).catch(err => console.error('Aviso de apuntado falló:', err.message));
     const forceResend = req.body?.resend === true;
     if (signup.invite_sent_at && !forceResend) return res.json({ ok: true, alreadySent: true });
     try {
