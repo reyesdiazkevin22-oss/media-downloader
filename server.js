@@ -746,6 +746,86 @@ app.post('/api/notify-wall-post', requireAuth, apiLimiter, async (req, res) => {
     res.json({ ok: true, started: true });
 });
 
+// ── Reunión de miembros: invitación de Google Meet por correo ─────────────────────────
+// Variables en Railway: MEETING_MEET_URL (enlace de Meet, obligatorio), MEETING_WHEN_TEXT
+// (ej. "el martes 27 de octubre a las 19:00 (hora de España)"), y opcionales
+// MEETING_START_UTC / MEETING_END_UTC con formato 20261027T180000Z para el botón de calendario.
+const MEETING_SLUG = 'primera-reunion';
+
+async function sendMeetingInvite(userId) {
+    const meetUrl = process.env.MEETING_MEET_URL;
+    if (!meetUrl) {
+        console.warn('MEETING_MEET_URL no configurada, no se pudo mandar la invitación a', userId);
+        return false;
+    }
+    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const email = userData?.user?.email;
+    if (!email) return false;
+    const name = userData.user.user_metadata?.full_name || email.split('@')[0];
+    const when = process.env.MEETING_WHEN_TEXT || 'el martes 27 de octubre';
+    const start = process.env.MEETING_START_UTC;
+    const end = process.env.MEETING_END_UTC;
+    const calendarUrl = (start && end)
+        ? `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('Primera reunión de miembros GRIT')}&dates=${start}/${end}&details=${encodeURIComponent('Enlace de Google Meet: ' + meetUrl)}&location=${encodeURIComponent(meetUrl)}`
+        : '';
+    const text = `Hola ${name},
+
+Ya estás apuntado a la primera reunión de miembros de GRIT: “Hablemos de marketing”.
+
+Cuándo: ${when}
+Enlace de Google Meet: ${meetUrl}
+${calendarUrl ? `\nAñadirla a tu calendario: ${calendarUrl}\n` : ''}
+Guarda este correo para tener el enlace a mano. Si tienes alguna duda, responde aquí.
+
+Nos vemos ahí,
+Alexevin
+Proyecto GRIT`;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(name)},</p>
+<p>Ya estás apuntado a la primera reunión de miembros de GRIT: “Hablemos de marketing”.</p>
+<p><strong>Cuándo:</strong> ${escapeHtml(when)}<br><strong>Enlace de Google Meet:</strong> <a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a></p>
+${calendarUrl ? `<p><a href="${escapeHtml(calendarUrl)}">Añadirla a tu calendario</a></p>` : ''}
+<p>Guarda este correo para tener el enlace a mano. Si tienes alguna duda, responde aquí.</p>
+<p>Nos vemos ahí,<br>Alexevin<br>Proyecto GRIT</p>
+</div>`;
+    await sendEmail(email, 'Tu lugar en la reunión de miembros de GRIT', html, text);
+    await supabaseAdmin.from('meeting_signups').update({ invite_sent_at: new Date().toISOString() }).eq('meeting', MEETING_SLUG).eq('user_id', userId);
+    return true;
+}
+
+// La persona acaba de apuntarse desde la web: se le manda su invitación (solo la suya).
+app.post('/api/meeting-invite', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: signup } = await supabaseAdmin.from('meeting_signups')
+        .select('id, invite_sent_at').eq('meeting', MEETING_SLUG).eq('user_id', req.user.id).maybeSingle();
+    if (!signup) return res.status(404).json({ error: 'No estás apuntado.' });
+    if (signup.invite_sent_at) return res.json({ ok: true, alreadySent: true });
+    try {
+        const emailed = await sendMeetingInvite(req.user.id);
+        res.json({ ok: true, emailed });
+    } catch (err) {
+        console.error('Error mandando la invitación de la reunión:', err.message);
+        res.json({ ok: true, emailed: false }); // el apuntado ya está guardado; las pendientes se reenvían desde el panel
+    }
+});
+
+// Alexevin reenvía las invitaciones que no salieron (por ejemplo, si aún no estaba puesto el enlace de Meet).
+app.post('/api/meeting-send-pending', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+    if (!process.env.MEETING_MEET_URL) return res.status(400).json({ error: 'Falta MEETING_MEET_URL en Railway.' });
+    const { data: pending } = await supabaseAdmin.from('meeting_signups')
+        .select('user_id').eq('meeting', MEETING_SLUG).is('invite_sent_at', null);
+    let sent = 0, failed = 0;
+    for (const row of pending || []) {
+        try { if (await sendMeetingInvite(row.user_id)) sent++; else failed++; }
+        catch (err) { failed++; console.error('Invitación pendiente falló:', err.message); }
+        await new Promise(r => setTimeout(r, 700));
+    }
+    res.json({ ok: true, sent, failed });
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
