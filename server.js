@@ -888,7 +888,7 @@ Proyecto GRIT`;
 <p>Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.</p>
 <p>Nos vemos esta noche,<br>Alexevin<br>Proyecto GRIT</p>
 </div>`;
-    await sendEmail(email, 'Hoy es la reunión de GRIT', html, text);
+    await sendEmail(email, 'Así es como debes crear tu contenido', html, text);
     return true;
 }
 
