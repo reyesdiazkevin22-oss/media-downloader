@@ -119,6 +119,15 @@ function sanitizeUrl(url) {
 // YouTube cookies can rotate/expire, which yt-dlp reports as one of these errors.
 // When that happens, retry once without cookies instead of failing outright.
 const RETRYABLE_YT_COOKIE_ERROR = /page needs to be reloaded|Sign in to confirm you're not a bot|cookies are no longer valid/i;
+// Expired Instagram session cookies make Instagram answer with an empty/HTML page,
+// which yt-dlp reports as a JSON parse failure. Public posts work without cookies.
+const RETRYABLE_IG_COOKIE_ERROR = /Failed to parse JSON|login required|rate-limit reached|Requested content is not available/i;
+
+function shouldRetryWithoutCookies(platform, stderr) {
+    if (platform === 'youtube') return RETRYABLE_YT_COOKIE_ERROR.test(stderr || '');
+    if (platform === 'instagram') return RETRYABLE_IG_COOKIE_ERROR.test(stderr || '');
+    return false;
+}
 
 function execYtDlpWithCookieFallback(buildArgs, platform, execOptions, callback) {
     const cookiesFile = path.join(__dirname, 'cookies.txt');
@@ -127,8 +136,8 @@ function execYtDlpWithCookieFallback(buildArgs, platform, execOptions, callback)
     function attempt(useCookies) {
         const args = buildArgs(useCookies ? cookiesFile : null);
         execFile('python', args, execOptions, (error, stdout, stderr) => {
-            if (error && useCookies && platform === 'youtube' && RETRYABLE_YT_COOKIE_ERROR.test(stderr || '')) {
-                console.warn('[YOUTUBE] Cookies invalidas o caducadas, reintentando sin cookies...');
+            if (error && useCookies && shouldRetryWithoutCookies(platform, stderr)) {
+                console.warn(`[${platform.toUpperCase()}] Cookies invalidas o caducadas, reintentando sin cookies...`);
                 return attempt(false);
             }
             callback(error, stdout, stderr);
@@ -844,6 +853,71 @@ app.post('/api/meeting-send-pending', requireAuth, apiLimiter, async (req, res) 
     for (const row of pending || []) {
         try { if (await sendMeetingInvite(row.user_id)) sent++; else failed++; }
         catch (err) { failed++; console.error('Invitación pendiente falló:', err.message); }
+        await new Promise(r => setTimeout(r, 700));
+    }
+    res.json({ ok: true, sent, failed });
+});
+
+// Recordatorio de la reunión (el mismo día): lo lanza Alexevin desde el panel.
+// "test: true" lo manda solo a su propio correo y no marca nada; sin "test" va a todos los
+// apuntados que no lo hayan recibido (reminder_sent_at) y deja la marca para no repetir.
+async function sendMeetingReminder(userId) {
+    const meetUrl = process.env.MEETING_MEET_URL;
+    if (!meetUrl) return false;
+    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const email = userData?.user?.email;
+    if (!email) return false;
+    const name = userData.user.user_metadata?.full_name || email.split('@')[0];
+    const times = process.env.MEETING_TIMES_TEXT || '22:00 España · 16:00 Colombia · 15:00 México · 18:00 Argentina';
+    const text = `Hola ${name},
+
+Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.
+
+Hora: ${times}
+Enlace de Google Meet: ${meetUrl}
+
+Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.
+
+Nos vemos esta noche,
+Alexevin
+Proyecto GRIT`;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(name)},</p>
+<p>Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.</p>
+<p><strong>Hora:</strong> ${escapeHtml(times)}<br><strong>Enlace de Google Meet:</strong> <a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a></p>
+<p>Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.</p>
+<p>Nos vemos esta noche,<br>Alexevin<br>Proyecto GRIT</p>
+</div>`;
+    await sendEmail(email, 'Hoy es la reunión de GRIT', html, text);
+    return true;
+}
+
+app.post('/api/meeting-send-reminder', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+    if (!process.env.MEETING_MEET_URL) return res.status(400).json({ error: 'Falta MEETING_MEET_URL en Railway.' });
+    if (req.body?.test === true) {
+        try { return res.json({ ok: true, test: true, sent: (await sendMeetingReminder(req.user.id)) ? 1 : 0, failed: 0 }); }
+        catch (err) { console.error('Recordatorio de prueba falló:', err.message); return res.json({ ok: true, test: true, sent: 0, failed: 1 }); }
+    }
+    const { data: pending, error } = await supabaseAdmin.from('meeting_signups')
+        .select('id, user_id').eq('meeting', MEETING_SLUG).is('reminder_sent_at', null);
+    if (error) return res.status(400).json({ error: 'Falta la columna reminder_sent_at en Supabase (ejecuta el SQL).' });
+    let sent = 0, failed = 0;
+    for (const row of pending || []) {
+        // Se reclama antes de enviar: si el botón se pulsa dos veces, nadie recibe el correo doble.
+        const { data: claimed } = await supabaseAdmin.from('meeting_signups')
+            .update({ reminder_sent_at: new Date().toISOString() }).eq('id', row.id).is('reminder_sent_at', null).select('id');
+        if (!claimed?.length) continue;
+        try {
+            if (await sendMeetingReminder(row.user_id)) sent++;
+            else { failed++; await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: null }).eq('id', row.id); }
+        } catch (err) {
+            failed++;
+            console.error('Recordatorio falló:', err.message);
+            await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: null }).eq('id', row.id);
+        }
         await new Promise(r => setTimeout(r, 700));
     }
     res.json({ ok: true, sent, failed });
