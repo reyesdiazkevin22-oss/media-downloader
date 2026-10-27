@@ -870,7 +870,7 @@ async function sendMeetingReminder(userId, soon = false) {
     const name = userData.user.user_metadata?.full_name || email.split('@')[0];
     const times = process.env.MEETING_TIMES_TEXT || '22:00 España · 16:00 Colombia · 15:00 México · 18:00 Argentina';
     const intro = soon
-        ? 'En 30 minutos empieza la primera reunión de miembros de GRIT: “Hablemos de marketing”.'
+        ? 'En 10 minutos empieza la primera reunión de miembros de GRIT: “Hablemos de marketing”.'
         : 'Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.';
     const text = `Hola ${name},
 
@@ -891,7 +891,7 @@ Proyecto GRIT`;
 <p>Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.</p>
 <p>Nos vemos ${soon ? 'ahora' : 'esta noche'},<br>Alexevin<br>Proyecto GRIT</p>
 </div>`;
-    await sendEmail(email, soon ? 'Empezamos en 30 minutos' : 'Así es como debes crear tu contenido', html, text);
+    await sendEmail(email, soon ? 'Empezamos en 10 minutos' : 'Así es como debes crear tu contenido', html, text);
     return true;
 }
 
