@@ -931,6 +931,78 @@ app.post('/api/meeting-send-reminder', requireAuth, apiLimiter, async (req, res)
     res.json({ ok: true, sent, failed });
 });
 
+// "Empezamos en 5 minutos" para TODOS los usuarios con cuenta (no solo los apuntados).
+// "test: true" lo manda solo a Alexevin. Se manda en segundo plano y cada persona queda marcada
+// (meeting_now_sent_at) para que un doble clic o un reintento no repita correos.
+async function sendMeetingNowEmail(user) {
+    const meetUrl = process.env.MEETING_MEET_URL;
+    const name = user.user_metadata?.full_name || user.email.split('@')[0];
+    const text = `Hola ${name},
+
+En 5 minutos empezamos la primera reunión de miembros de GRIT: “Hablemos de marketing”.
+
+Entra aquí: ${meetUrl}
+
+Si llegas un poco tarde no pasa nada, entra igualmente.
+
+Alexevin
+Proyecto GRIT`;
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
+<p>Hola ${escapeHtml(name)},</p>
+<p>En 5 minutos empezamos la primera reunión de miembros de GRIT: “Hablemos de marketing”.</p>
+<p><strong>Entra aquí:</strong> <a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a></p>
+<p>Si llegas un poco tarde no pasa nada, entra igualmente.</p>
+<p>Alexevin<br>Proyecto GRIT</p>
+</div>`;
+    await sendEmail(user.email, 'Empezamos en 5 minutos', html, text);
+}
+
+app.post('/api/meeting-notify-all', requireAuth, apiLimiter, async (req, res) => {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'No configurado.' });
+    const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
+    if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
+    if (!process.env.MEETING_MEET_URL) return res.status(400).json({ error: 'Falta MEETING_MEET_URL en Railway.' });
+    if (req.body?.test === true) {
+        try {
+            const { data } = await supabaseAdmin.auth.admin.getUserById(req.user.id);
+            await sendMeetingNowEmail(data.user);
+            return res.json({ ok: true, test: true });
+        } catch (err) {
+            console.error('Prueba de aviso falló:', err.message);
+            return res.status(502).json({ error: 'No se pudo enviar la prueba.' });
+        }
+    }
+    res.json({ ok: true, started: true });
+    let sent = 0, failed = 0, page = 1;
+    try {
+        while (true) {
+            const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 200 });
+            if (error) throw error;
+            const users = data?.users || [];
+            if (!users.length) break;
+            for (const user of users) {
+                if (!user.email || !user.email_confirmed_at) continue;
+                const meta = user.user_metadata || {};
+                if (meta.meeting_now_sent_at) continue;
+                try {
+                    await sendMeetingNowEmail(user);
+                    await supabaseAdmin.auth.admin.updateUserById(user.id, { user_metadata: { ...meta, meeting_now_sent_at: new Date().toISOString() } });
+                    sent++;
+                } catch (err) {
+                    failed++;
+                    console.error('Aviso de reunión falló para', user.email, ':', err.message);
+                }
+                await new Promise(r => setTimeout(r, 600));
+            }
+            if (users.length < 200) break;
+            page++;
+        }
+    } catch (err) {
+        console.error('Aviso de reunión a todos se detuvo:', err.message);
+    }
+    console.log(`Aviso "empezamos en 5 minutos": enviados ${sent}, fallidos ${failed}.`);
+});
+
 // API: Transcribe Video/Audio from URL — disponible en local; en Railway no está
 // instalado Whisper (no se usa desde la web pública, ver Nota en README).
 app.get('/api/transcribe', requireAuth, apiLimiter, (req, res) => {
