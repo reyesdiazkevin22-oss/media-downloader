@@ -861,7 +861,7 @@ app.post('/api/meeting-send-pending', requireAuth, apiLimiter, async (req, res) 
 // Recordatorio de la reunión (el mismo día): lo lanza Alexevin desde el panel.
 // "test: true" lo manda solo a su propio correo y no marca nada; sin "test" va a todos los
 // apuntados que no lo hayan recibido (reminder_sent_at) y deja la marca para no repetir.
-async function sendMeetingReminder(userId) {
+async function sendMeetingReminder(userId, soon = false) {
     const meetUrl = process.env.MEETING_MEET_URL;
     if (!meetUrl) return false;
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -869,26 +869,29 @@ async function sendMeetingReminder(userId) {
     if (!email) return false;
     const name = userData.user.user_metadata?.full_name || email.split('@')[0];
     const times = process.env.MEETING_TIMES_TEXT || '22:00 España · 16:00 Colombia · 15:00 México · 18:00 Argentina';
+    const intro = soon
+        ? 'En 30 minutos empieza la primera reunión de miembros de GRIT: “Hablemos de marketing”.'
+        : 'Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.';
     const text = `Hola ${name},
 
-Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.
+${intro}
 
 Hora: ${times}
 Enlace de Google Meet: ${meetUrl}
 
 Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.
 
-Nos vemos esta noche,
+Nos vemos ${soon ? 'ahora' : 'esta noche'},
 Alexevin
 Proyecto GRIT`;
     const html = `<div style="font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.6; color:#222;">
 <p>Hola ${escapeHtml(name)},</p>
-<p>Te recuerdo que hoy es la primera reunión de miembros de GRIT: “Hablemos de marketing”.</p>
+<p>${intro}</p>
 <p><strong>Hora:</strong> ${escapeHtml(times)}<br><strong>Enlace de Google Meet:</strong> <a href="${escapeHtml(meetUrl)}">${escapeHtml(meetUrl)}</a></p>
 <p>Entra con unos minutos de margen. Si algo no te funciona, responde a este correo.</p>
-<p>Nos vemos esta noche,<br>Alexevin<br>Proyecto GRIT</p>
+<p>Nos vemos ${soon ? 'ahora' : 'esta noche'},<br>Alexevin<br>Proyecto GRIT</p>
 </div>`;
-    await sendEmail(email, 'Así es como debes crear tu contenido', html, text);
+    await sendEmail(email, soon ? 'Empezamos en 30 minutos' : 'Así es como debes crear tu contenido', html, text);
     return true;
 }
 
@@ -897,26 +900,31 @@ app.post('/api/meeting-send-reminder', requireAuth, apiLimiter, async (req, res)
     const { data: adminRow } = await supabaseAdmin.from('app_admins').select('user_id').eq('user_id', req.user.id).maybeSingle();
     if (!adminRow) return res.status(403).json({ error: 'No autorizado.' });
     if (!process.env.MEETING_MEET_URL) return res.status(400).json({ error: 'Falta MEETING_MEET_URL en Railway.' });
+    // "soon" = aviso de última hora (30 min antes): llega también a quien ya recibió el recordatorio
+    // de la tarde; solo se salta a quien lo recibió hace menos de 3 horas (evita dobles por doble clic).
+    const soon = req.body?.soon === true;
     if (req.body?.test === true) {
-        try { return res.json({ ok: true, test: true, sent: (await sendMeetingReminder(req.user.id)) ? 1 : 0, failed: 0 }); }
+        try { return res.json({ ok: true, test: true, sent: (await sendMeetingReminder(req.user.id, soon)) ? 1 : 0, failed: 0 }); }
         catch (err) { console.error('Recordatorio de prueba falló:', err.message); return res.json({ ok: true, test: true, sent: 0, failed: 1 }); }
     }
+    const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const notRecent = soon ? `reminder_sent_at.is.null,reminder_sent_at.lt.${cutoff}` : 'reminder_sent_at.is.null';
     const { data: pending, error } = await supabaseAdmin.from('meeting_signups')
-        .select('id, user_id').eq('meeting', MEETING_SLUG).is('reminder_sent_at', null);
+        .select('id, user_id, reminder_sent_at').eq('meeting', MEETING_SLUG).or(notRecent);
     if (error) return res.status(400).json({ error: 'Falta la columna reminder_sent_at en Supabase (ejecuta el SQL).' });
     let sent = 0, failed = 0;
     for (const row of pending || []) {
         // Se reclama antes de enviar: si el botón se pulsa dos veces, nadie recibe el correo doble.
         const { data: claimed } = await supabaseAdmin.from('meeting_signups')
-            .update({ reminder_sent_at: new Date().toISOString() }).eq('id', row.id).is('reminder_sent_at', null).select('id');
+            .update({ reminder_sent_at: new Date().toISOString() }).eq('id', row.id).or(notRecent).select('id');
         if (!claimed?.length) continue;
         try {
-            if (await sendMeetingReminder(row.user_id)) sent++;
-            else { failed++; await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: null }).eq('id', row.id); }
+            if (await sendMeetingReminder(row.user_id, soon)) sent++;
+            else { failed++; await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: row.reminder_sent_at }).eq('id', row.id); }
         } catch (err) {
             failed++;
             console.error('Recordatorio falló:', err.message);
-            await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: null }).eq('id', row.id);
+            await supabaseAdmin.from('meeting_signups').update({ reminder_sent_at: row.reminder_sent_at }).eq('id', row.id);
         }
         await new Promise(r => setTimeout(r, 700));
     }
